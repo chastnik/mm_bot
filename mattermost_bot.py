@@ -66,6 +66,9 @@ class MattermostBot:
         self.teams = []
         self.channels = []
         
+        # Отслеживание обработанных сообщений
+        self.processed_messages = set()
+        
         # Флаг для остановки бота
         self.running = False
     
@@ -190,6 +193,18 @@ class MattermostBot:
         try:
             user_id = post['user_id']
             message = post['message']
+            post_id = post.get('id', '')
+            
+            # Проверяем, не обрабатывали ли мы уже это сообщение
+            if post_id in self.processed_messages:
+                return
+            
+            # Добавляем сообщение в список обработанных
+            self.processed_messages.add(post_id)
+            
+            # Ограничиваем размер кэша (оставляем последние 1000 сообщений)
+            if len(self.processed_messages) > 1000:
+                self.processed_messages = set(list(self.processed_messages)[-500:])
             
             log_with_timestamp(f"📨 Получено сообщение: '{message}' от пользователя {user_id}")
             
@@ -217,16 +232,27 @@ class MattermostBot:
     
     def _is_interactive_action(self, post: Dict) -> bool:
         """Проверяет, является ли сообщение интерактивным действием"""
-        message = post.get('message', '').lower().strip()
+        message = post.get('message', '').strip()
         
-        # Проверяем команды-кнопки
-        interactive_commands = [
-            '🚀', '📋', '📁', '🔄', '✅', '➕',
-            'начать анализ', 'выбрать тип', 'добавить документы', 
-            'анализировать', 'новый анализ'
+        # Проверяем только команды с эмодзи (строгое соответствие)
+        emoji_commands = ['🚀', '📋', '📁', '🔄', '✅', '➕']
+        
+        # Команда должна содержать эмодзи или быть точной командой
+        has_emoji = any(emoji in message for emoji in emoji_commands)
+        
+        # Точные интерактивные команды (без конфликта с обычными)
+        exact_commands = [
+            '🚀 начать анализ', '🚀 новый анализ',
+            '➕ добавить документы', '🔄 начать анализ'
         ]
         
-        return any(cmd in message for cmd in interactive_commands)
+        message_lower = message.lower()
+        is_exact_command = any(cmd in message_lower for cmd in exact_commands)
+        
+        # Команды с эмодзи кодов проектов
+        is_project_command = '📋' in message and any(code in message.upper() for code in PROJECT_TYPES.keys())
+        
+        return has_emoji and (is_exact_command or is_project_command)
     
     async def _handle_interactive_action(self, post: Dict, channel_id: str):
         """Обрабатывает интерактивные действия (эмодзи-команды)"""
@@ -265,8 +291,8 @@ class MattermostBot:
                 await self._start_analysis(user_id, channel_id, session)
                 
             else:
-                # Обрабатываем как обычное сообщение
-                await self._process_user_action(user_id, channel_id, message, post, session)
+                # Неизвестная интерактивная команда - игнорируем
+                log_with_timestamp(f"⚠️ Неизвестная интерактивная команда: '{message}'")
                 
         except Exception as e:
             print(f"Ошибка при обработке интерактивной команды: {str(e)}")
@@ -342,8 +368,8 @@ class MattermostBot:
 • ✅ `https://confluence.1solution.ru/x/ABC123`
         """
         
-                          # Добавляем интерактивную команду
-         message += """
+        # Добавляем интерактивную команду
+        message += """
 
 🚀 **Для начала работы нажмите:** `🚀 Начать анализ`
         """
@@ -364,22 +390,14 @@ class MattermostBot:
 Выберите один или несколько типов проектов из списка ниже:
         """
         
-        # Создаем опции для селектора
-        options = []
+        # Добавляем интерактивные команды для типов проектов
+        message += "\n\n**📋 Нажмите на тип проекта для выбора:**\n"
         for code, name in PROJECT_TYPES.items():
-            options.append({
-                "text": f"{code} - {name}",
-                "value": code
-            })
+            message += f"• `📋 {code}` - {name}\n"
         
-                          # Добавляем интерактивные команды для типов проектов
-         message += "\n\n**📋 Нажмите на тип проекта для выбора:**\n"
-         for code, name in PROJECT_TYPES.items():
-             message += f"• `📋 {code}` - {name}\n"
-         
-         message += "\n💡 **Можно выбрать несколько:** `📋 BI,DWH`"
-         
-         await self._send_message(channel_id, message)
+        message += "\n💡 **Можно выбрать несколько:** `📋 BI,DWH`"
+        
+        await self._send_message(channel_id, message)
     
     async def _handle_project_types_selection_action(self, user_id: str, channel_id: str, 
                                                     selected_types: List[str], session: Dict):
@@ -521,15 +539,15 @@ class MattermostBot:
             docs_count = len(session['documents'])
             message_text = f"✅ **Получено документов: {docs_count}**\n\n**Что дальше?**"
             
-                                      # Добавляем интерактивные команды
-             message_text += """
+            # Добавляем интерактивные команды
+            message_text += """
 
 **Выберите действие:**
 • `➕ Добавить документы` - добавить еще файлы
 • `🔄 Начать анализ` - анализировать все документы
-             """
-             
-             await self._send_message(channel_id, message_text)
+            """
+            
+            await self._send_message(channel_id, message_text)
         else:
             print(f"❌ Документы не найдены!")
             print(f"   Файлы: {len(file_ids)} (IDs: {file_ids})")
@@ -693,14 +711,14 @@ class MattermostBot:
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
         
-                          # Интерактивная команда для нового анализа
-         restart_message = """
+        # Интерактивная команда для нового анализа
+        restart_message = """
 **Готовы к новому анализу?**
 
 🚀 **Нажмите:** `🚀 Новый анализ`
          """
          
-         await self._send_message(channel_id, restart_message)
+        await self._send_message(channel_id, restart_message)
     
     def _extract_confluence_urls(self, message: str) -> List[str]:
         """Извлекает ссылки на Confluence из сообщения"""
