@@ -193,14 +193,17 @@ class MattermostBot:
             
             log_with_timestamp(f"📨 Получено сообщение: '{message}' от пользователя {user_id}")
             
+            # Проверяем интерактивные действия (нажатие кнопок)
+            if self._is_interactive_action(post):
+                await self._handle_interactive_action(post, channel_id)
+                return
+            
             # Проверяем, обращается ли сообщение к боту
             is_for_bot = self._is_message_for_bot(message, post)
             log_with_timestamp(f"🤖 Сообщение для бота: {is_for_bot}")
             
             if not is_for_bot:
                 return
-            
-            print(f"✅ Обрабатываем сообщение от пользователя {user_id}")
             
             # Получаем или создаем сессию пользователя
             session = self._get_user_session(user_id)
@@ -212,44 +215,82 @@ class MattermostBot:
             print(f"Ошибка при обработке сообщения: {str(e)}")
             await self._send_error_message(channel_id, "Произошла ошибка при обработке сообщения")
     
+    def _is_interactive_action(self, post: Dict) -> bool:
+        """Проверяет, является ли сообщение интерактивным действием"""
+        message = post.get('message', '').lower().strip()
+        
+        # Проверяем команды-кнопки
+        interactive_commands = [
+            '🚀', '📋', '📁', '🔄', '✅', '➕',
+            'начать анализ', 'выбрать тип', 'добавить документы', 
+            'анализировать', 'новый анализ'
+        ]
+        
+        return any(cmd in message for cmd in interactive_commands)
+    
+    async def _handle_interactive_action(self, post: Dict, channel_id: str):
+        """Обрабатывает интерактивные действия (эмодзи-команды)"""
+        try:
+            user_id = post['user_id']
+            message = post.get('message', '').strip()
+            
+            log_with_timestamp(f"🔘 Интерактивная команда: '{message}' от пользователя {user_id}")
+            
+            session = self._get_user_session(user_id)
+            
+            # Определяем действие по эмодзи и тексту
+            if '🚀' in message and ('начать анализ' in message.lower() or 'новый анализ' in message.lower()):
+                if 'новый' in message.lower():
+                    await self._handle_restart_analysis_action(user_id, channel_id, session)
+                else:
+                    await self._handle_start_analysis_action(user_id, channel_id, session)
+                    
+            elif '📋' in message:
+                # Извлекаем коды типов проектов
+                selected_types = []
+                message_upper = message.upper()
+                for code in PROJECT_TYPES.keys():
+                    if code in message_upper:
+                        selected_types.append(code)
+                
+                if selected_types:
+                    await self._handle_project_types_selection_action(user_id, channel_id, selected_types, session)
+                else:
+                    await self._ask_project_types_with_selector(channel_id, session)
+                    
+            elif '➕' in message and 'добавить' in message.lower():
+                await self._handle_add_more_documents_action(user_id, channel_id, session)
+                
+            elif '🔄' in message and 'анализ' in message.lower():
+                await self._start_analysis(user_id, channel_id, session)
+                
+            else:
+                # Обрабатываем как обычное сообщение
+                await self._process_user_action(user_id, channel_id, message, post, session)
+                
+        except Exception as e:
+            print(f"Ошибка при обработке интерактивной команды: {str(e)}")
+            await self._send_error_message(channel_id, "Произошла ошибка при обработке команды")
+    
     def _is_message_for_bot(self, message: str, post: Dict) -> bool:
         """Проверяет, предназначено ли сообщение для бота"""
-        try:
-            # Получаем информацию о канале
-            channel_info = self.driver.channels.get_channel(post['channel_id'])
-            channel_type = channel_info.get('type', '')
-            
-            print(f"🔍 Проверка сообщения: канал {post['channel_id']}, тип: {channel_type}")
-            
-            # Прямое сообщение боту
-            if channel_type == 'D':  # Direct message
-                print("✅ Это прямое сообщение")
-                return True
-            
-            # Получаем имя бота
-            bot_user = self.driver.users.get_user('me')
-            bot_username = bot_user['username']
-            
-            print(f"🤖 Имя бота: {bot_username}")
-            
-            # Проверяем упоминание бота в сообщении
-            if f"@{bot_username}" in message:
-                print("✅ Найдено упоминание бота")
-                return True
-            
-            # Также проверяем общие команды, которые могут быть адресованы боту
-            trigger_words = ['привет', 'начать', 'help', 'старт', 'bot']
-            if any(word in message.lower() for word in trigger_words):
-                print(f"✅ Найдено ключевое слово: {message}")
-                return True
-                
-            print("❌ Сообщение не для бота")
-            return False
-            
-        except Exception as e:
-            print(f"❌ Ошибка при проверке сообщения: {str(e)}")
-            # В случае ошибки считаем что сообщение для бота (безопаснее)
+        # Проверяем упоминания бота
+        mention_pattern = f"@{self.config.mattermost.username}"
+        if mention_pattern in message:
             return True
+        
+        # Проверяем ключевые слова для активации
+        trigger_words = [
+            'начать анализ', 'start', 'привет', 'hello', 'help', 'помощь',
+            'анализ документов', 'document analysis', 'analyze', 'анализировать'
+        ]
+        
+        message_lower = message.lower().strip()
+        for trigger in trigger_words:
+            if trigger in message_lower:
+                return True
+        
+        return False
     
     def _get_user_session(self, user_id: str) -> Dict:
         """Получает или создает сессию пользователя"""
@@ -265,36 +306,27 @@ class MattermostBot:
     async def _process_user_action(self, user_id: str, channel_id: str, message: str, 
                                  post: Dict, session: Dict):
         """Обрабатывает действие пользователя в зависимости от состояния"""
-        
-        state = session['state']
-        print(f"🎯 Обрабатываю действие пользователя {user_id}. Состояние: {state}")
+        state = session.get('state', 'initial')
         
         if state == 'initial':
-            print("🏁 Обработка начального состояния")
             await self._handle_initial_state(user_id, channel_id, message, session)
         elif state == 'waiting_project_types':
-            print("📋 Обработка выбора типа проекта")
             await self._handle_project_type_selection(user_id, channel_id, message, session)
         elif state == 'waiting_documents':
-            print("📁 Обработка отправки документов")
             await self._handle_document_submission(user_id, channel_id, message, post, session)
         elif state == 'asking_more_documents':
-            print("❓ Обработка вопроса о дополнительных документах")
             await self._handle_more_documents_question(user_id, channel_id, message, post, session)
         else:
-            print(f"⚠️ Неизвестное состояние: {state}")
+            # Неизвестное состояние - сбрасываем
+            self._reset_session(session)
             await self._handle_initial_state(user_id, channel_id, message, session)
     
     async def _handle_initial_state(self, user_id: str, channel_id: str, message: str, session: Dict):
         """Обрабатывает начальное состояние"""
-        if "начать анализ" in message.lower() or "start" in message.lower():
-            await self._ask_project_types(channel_id, session)
-        else:
-            # Отправляем приветствие только если не команда "начать анализ"
-            await self._send_welcome_message(channel_id)
+        await self._send_welcome_message(channel_id)
     
     async def _send_welcome_message(self, channel_id: str):
-        """Отправляет приветственное сообщение"""
+        """Отправляет приветственное сообщение с интерактивными кнопками"""
         message = """
 🤖 **Привет! Я бот для анализа документации ИТ проектов.**
 
@@ -308,34 +340,80 @@ class MattermostBot:
 Всегда используйте **полный URL** из адресной строки браузера:
 • ✅ `https://confluence.1solution.ru/spaces/PROJECT/pages/123456/PageName`
 • ✅ `https://confluence.1solution.ru/x/ABC123`
+        """
+        
+                          # Добавляем интерактивную команду
+         message += """
 
-**Для начала работы напишите:** `начать анализ` или `start`
+🚀 **Для начала работы нажмите:** `🚀 Начать анализ`
         """
         
         await self._send_message(channel_id, message)
     
-    async def _ask_project_types(self, channel_id: str, session: Dict):
-        """Спрашивает тип проекта"""
+    async def _handle_start_analysis_action(self, user_id: str, channel_id: str, session: Dict):
+        """Обрабатывает нажатие кнопки 'Начать анализ'"""
+        await self._ask_project_types_with_selector(channel_id, session)
+    
+    async def _ask_project_types_with_selector(self, channel_id: str, session: Dict):
+        """Спрашивает тип проекта с помощью селектора"""
         session['state'] = 'waiting_project_types'
         
         message = """
 📋 **Какой тип проекта необходимо проанализировать?**
 
-Доступные типы проектов:
-"""
+Выберите один или несколько типов проектов из списка ниже:
+        """
         
+        # Создаем опции для селектора
+        options = []
         for code, name in PROJECT_TYPES.items():
-            message += f"• `{code}` - {name}\n"
+            options.append({
+                "text": f"{code} - {name}",
+                "value": code
+            })
         
-        message += """
-**Напишите код типа проекта** (например: `BI` или `BI,DWH` для нескольких типов)
+                          # Добавляем интерактивные команды для типов проектов
+         message += "\n\n**📋 Нажмите на тип проекта для выбора:**\n"
+         for code, name in PROJECT_TYPES.items():
+             message += f"• `📋 {code}` - {name}\n"
+         
+         message += "\n💡 **Можно выбрать несколько:** `📋 BI,DWH`"
+         
+         await self._send_message(channel_id, message)
+    
+    async def _handle_project_types_selection_action(self, user_id: str, channel_id: str, 
+                                                    selected_types: List[str], session: Dict):
+        """Обрабатывает выбор типов проектов через селектор"""
+        if not selected_types:
+            await self._send_message(channel_id, 
+                "❌ Типы проектов не выбраны. Пожалуйста, выберите хотя бы один тип.")
+            return
+        
+        session['project_types'] = selected_types
+        session['state'] = 'waiting_documents'
+        
+        types_text = ", ".join([PROJECT_TYPES[t] for t in selected_types])
+        
+        message = f"""
+✅ **Выбранные типы проектов:** {types_text}
+
+📁 **Теперь предоставьте документы или ссылки для анализа:**
+• Прикрепите файлы (PDF, DOCX, XLSX, RTF)
+• Отправьте ссылки на Confluence
+• Можно делать это в одном сообщении
+
+💡 **Для Confluence:** используйте полный URL из адресной строки браузера
         """
         
         await self._send_message(channel_id, message)
     
+    async def _ask_project_types(self, channel_id: str, session: Dict):
+        """Спрашивает тип проекта (устаревший метод, оставлен для совместимости)"""
+        await self._ask_project_types_with_selector(channel_id, session)
+    
     async def _handle_project_type_selection(self, user_id: str, channel_id: str, 
                                            message: str, session: Dict):
-        """Обрабатывает выбор типа проекта"""
+        """Обрабатывает выбор типа проекта (устаревший метод для текстового ввода)"""
         # Парсим выбранные типы из сообщения
         selected_types = []
         
@@ -364,17 +442,21 @@ class MattermostBot:
         
         # Убираем дубликаты
         selected_types = list(set(selected_types))
-        session['project_types'] = selected_types
+        await self._handle_project_types_selection_action(user_id, channel_id, selected_types, session)
+    
+    async def _handle_add_more_documents_action(self, user_id: str, channel_id: str, session: Dict):
+        """Обрабатывает нажатие кнопки 'Добавить еще документы'"""
         session['state'] = 'waiting_documents'
-        
-        types_text = ", ".join([PROJECT_TYPES[t] for t in selected_types])
         await self._send_message(channel_id, 
-            f"✅ **Выбранные типы проектов:** {types_text}\n\n" +
-            "📁 **Теперь предоставьте документы или ссылки для анализа:**\n" +
-            "• Прикрепите файлы (PDF, DOCX, XLSX, RTF)\n" +
-            "• Отправьте ссылки на Confluence\n" +
-            "• Можно делать это в одном сообщении\n\n" +
-            "💡 **Для Confluence:** используйте полный URL из адресной строки браузера")
+            "📁 **Отправьте дополнительные документы или ссылки:**\n\n"
+            "• Прикрепите файлы (PDF, DOCX, XLSX, RTF)\n"
+            "• Отправьте ссылки на Confluence\n"
+            "• Можно делать это в одном сообщении")
+    
+    async def _handle_restart_analysis_action(self, user_id: str, channel_id: str, session: Dict):
+        """Обрабатывает нажатие кнопки 'Новый анализ'"""
+        self._reset_session(session)
+        await self._send_welcome_message(channel_id)
     
     async def _handle_document_submission(self, user_id: str, channel_id: str, 
                                         message: str, post: Dict, session: Dict):
@@ -433,19 +515,21 @@ class MattermostBot:
         if documents:
             session['documents'].extend(documents)
             
-            # Спрашиваем, нужно ли добавить еще документы
+            # Спрашиваем, нужно ли добавить еще документы с интерактивными кнопками
             session['state'] = 'asking_more_documents'
             
             docs_count = len(session['documents'])
-            message_text = f"""
-✅ **Получено документов: {docs_count}**
-
-**Что дальше?**
-• Напишите `еще` или `добавить` - чтобы добавить еще документы
-• Напишите `анализ` или `все документы` - чтобы начать анализ
-            """
+            message_text = f"✅ **Получено документов: {docs_count}**\n\n**Что дальше?**"
             
-            await self._send_message(channel_id, message_text)
+                                      # Добавляем интерактивные команды
+             message_text += """
+
+**Выберите действие:**
+• `➕ Добавить документы` - добавить еще файлы
+• `🔄 Начать анализ` - анализировать все документы
+             """
+             
+             await self._send_message(channel_id, message_text)
         else:
             print(f"❌ Документы не найдены!")
             print(f"   Файлы: {len(file_ids)} (IDs: {file_ids})")
@@ -609,8 +693,14 @@ class MattermostBot:
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
         
-        # Простое сообщение вместо кнопки
-        await self._send_message(channel_id, "🚀 **Готовы к новому анализу?** Напишите `начать анализ`")
+                          # Интерактивная команда для нового анализа
+         restart_message = """
+**Готовы к новому анализу?**
+
+🚀 **Нажмите:** `🚀 Новый анализ`
+         """
+         
+         await self._send_message(channel_id, restart_message)
     
     def _extract_confluence_urls(self, message: str) -> List[str]:
         """Извлекает ссылки на Confluence из сообщения"""
