@@ -332,6 +332,12 @@ class MattermostBot:
     async def _process_user_action(self, user_id: str, channel_id: str, message: str, 
                                  post: Dict, session: Dict):
         """Обрабатывает действие пользователя в зависимости от состояния"""
+        # Проверяем команды сброса состояния
+        reset_commands = ['начать анализ', 'start', 'привет', 'hello', 'помощь', 'help']
+        if any(cmd in message.lower() for cmd in reset_commands):
+            # При стартовых командах всегда сбрасываем состояние
+            self._reset_session(session)
+        
         state = session.get('state', 'initial')
         
         if state == 'initial':
@@ -577,15 +583,41 @@ class MattermostBot:
     async def _handle_more_documents_question(self, user_id: str, channel_id: str, 
                                             message: str, post: Dict, session: Dict):
         """Обрабатывает вопрос о дополнительных документах"""
-        if "добавить" in message.lower() or "еще" in message.lower():
+        message_lower = message.lower()
+        
+        # Явные команды для добавления документов
+        if "добавить" in message_lower or "еще" in message_lower or "➕" in message:
             session['state'] = 'waiting_documents'
             await self._send_message(channel_id, 
-                "Отправьте дополнительные документы или ссылки.")
-        elif "все документы" in message.lower() or "анализ" in message.lower():
+                "📁 **Отправьте дополнительные документы или ссылки:**\n\n"
+                "• Прикрепите файлы (PDF, DOCX, XLSX, RTF)\n"
+                "• Отправьте ссылки на Confluence\n"
+                "• Можно делать это в одном сообщении")
+            return
+        
+        # Явные команды для начала анализа
+        if ("все документы" in message_lower or "анализ" in message_lower or 
+            "🔄" in message or "готово" in message_lower or "старт" in message_lower):
             await self._start_analysis(user_id, channel_id, session)
-        else:
-            # Проверяем, есть ли новые документы в сообщении
+            return
+        
+        # Проверяем, есть ли файлы или confluence ссылки в сообщении
+        has_files = bool(post.get('file_ids', []))
+        has_confluence = bool(self._extract_confluence_urls(message))
+        
+        if has_files or has_confluence:
+            # Есть документы - обрабатываем их
             await self._handle_document_submission(user_id, channel_id, message, post, session)
+        else:
+            # Нет документов и нет явных команд - игнорируем сообщение
+            # Можно отправить подсказку только если сообщение выглядит как попытка взаимодействия
+            if (len(message.strip()) > 2 and 
+                any(word in message_lower for word in ['что', 'как', 'помощь', 'help', '?'])):
+                await self._send_message(channel_id, 
+                    "💡 **Что дальше?**\n\n"
+                    "• `➕ Добавить документы` - добавить еще файлы\n"
+                    "• `🔄 Начать анализ` - анализировать все документы")
+            # Короткие сообщения (как "1") игнорируем полностью
     
     async def _start_analysis(self, user_id: str, channel_id: str, session: Dict):
         """Запускает анализ документов"""
