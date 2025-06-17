@@ -1,0 +1,42 @@
+# Виртуальное окружение
+venv/
+env/
+.venv/
+.env/
+
+# Python кэш
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Логи
+*.log
+logs/
+
+# Конфигурационные файлы с чувствительными данными
+.env
+config.local.py
+
+# IDE файлы
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Операционная система
+.DS_Store
+Thumbs.db
+
+# Временные файлы
+*.tmp
+*.temp
+.cache/
+
+# Документы и тестовые файлы
+test_output/
+temp_docs/
+
+# SSL сертификаты
+*.pem
+*.crt
+*.key 
