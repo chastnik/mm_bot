@@ -144,13 +144,36 @@ class MattermostBot:
             print(f"✅ Найдено команд: {len(self.teams)}")
             
             # Получаем все каналы
-            self.channels = []
+            all_channels = []
             for team in self.teams:
                 team_channels = self.driver.channels.get_channels_for_user(self.bot_user_id, team['id'])
-                self.channels.extend(team_channels)
+                all_channels.extend(team_channels)
                 print(f"📢 В команде '{team['name']}' найдено каналов: {len(team_channels)}")
             
-            print(f"✅ Всего каналов для мониторинга: {len(self.channels)}")
+            # Фильтруем каналы (убираем служебные и системные)
+            self.channels = []
+            excluded_types = ['D', 'G']  # D = Direct Message, G = Group Message
+            excluded_names = ['town-square', 'off-topic']  # Системные каналы
+            
+            for channel in all_channels:
+                channel_type = channel.get('type', '')
+                channel_name = channel.get('name', '').lower()
+                
+                # Пропускаем служебные каналы
+                if channel_type in excluded_types:
+                    continue
+                    
+                # Пропускаем системные каналы
+                if channel_name in excluded_names:
+                    continue
+                    
+                self.channels.append(channel)
+                print(f"✅ Добавлен канал: '{channel.get('name', 'Безымянный')}' (тип: {channel_type})")
+            
+            print(f"✅ Всего каналов для мониторинга: {len(self.channels)} (из {len(all_channels)} доступных)")
+            
+            if len(self.channels) == 0:
+                print("⚠️ ВНИМАНИЕ: Нет каналов для мониторинга! Бот может не получать сообщения.")
             
         except Exception as e:
             print(f"❌ Ошибка при инициализации каналов: {str(e)}")
@@ -160,11 +183,18 @@ class MattermostBot:
         """Основной цикл прослушивания сообщений"""
         last_post_time = int(time.time() * 1000)  # Время в миллисекундах
         print(f"👂 Начинаю слушать сообщения с времени: {last_post_time}")
+        print(f"🔗 Подключен к каналам: {len(self.channels)}")
+        for i, channel in enumerate(self.channels):
+            print(f"   {i+1}. {channel.get('name', 'Безымянный')} (ID: {channel['id']})")
         
         while self.running:
             try:
+                # Собираем все новые сообщения из всех каналов
+                all_new_posts = []
+                current_time = int(time.time() * 1000)
+                
                 # Проверяем новые сообщения в каждом канале
-                for channel in self.channels:
+                for channel_idx, channel in enumerate(self.channels):
                     # Получаем новые посты
                     posts = self.driver.posts.get_posts_for_channel(
                         channel['id'], 
@@ -175,11 +205,27 @@ class MattermostBot:
                                 if p['user_id'] != self.bot_user_id and p['create_at'] > last_post_time]
                     
                     if new_posts:
-                        print(f"📨 Найдено новых сообщений в канале {channel.get('name', channel['id'])}: {len(new_posts)}")
-                    
-                    for post in new_posts:
-                        await self._handle_message(post, channel['id'])
-                        last_post_time = max(last_post_time, post['create_at'])
+                        print(f"📨 Канал {channel_idx+1} ({channel.get('name', channel['id'])}): найдено {len(new_posts)} новых сообщений")
+                        for post_idx, post in enumerate(new_posts):
+                            print(f"   Сообщение {post_idx+1}: ID={post.get('id', 'нет')}, текст='{post.get('message', '')[:50]}', время={post.get('create_at', 0)}")
+                            # Добавляем информацию о канале к посту
+                            post['_source_channel_id'] = channel['id']
+                            all_new_posts.append(post)
+                
+                # Удаляем дубликаты постов по ID
+                unique_posts = {}
+                for post in all_new_posts:
+                    post_id = post.get('id')
+                    if post_id and post_id not in unique_posts:
+                        unique_posts[post_id] = post
+                    elif post_id:
+                        print(f"⚠️ ОБНАРУЖЕН ДУБЛИКАТ: Сообщение {post_id} найдено в нескольких каналах")
+                
+                # Обрабатываем уникальные сообщения
+                for post in unique_posts.values():
+                    source_channel_id = post.pop('_source_channel_id', post.get('channel_id', ''))
+                    await self._handle_message(post, source_channel_id)
+                    last_post_time = max(last_post_time, post['create_at'])
                 
                 # Небольшая пауза между проверками
                 await asyncio.sleep(2)
@@ -195,21 +241,32 @@ class MattermostBot:
             message = post['message']
             post_id = post.get('id', '')
             
+            log_with_timestamp(f"🔍 ОТЛАДКА: Обработка сообщения")
+            log_with_timestamp(f"   Post ID: {post_id}")
+            log_with_timestamp(f"   Channel ID: {channel_id}")
+            log_with_timestamp(f"   User ID: {user_id}")
+            log_with_timestamp(f"   Сообщение: '{message}'")
+            log_with_timestamp(f"   Уже обработанных сообщений: {len(self.processed_messages)}")
+            
             # Проверяем, не обрабатывали ли мы уже это сообщение
             if post_id in self.processed_messages:
+                log_with_timestamp(f"⚠️ ДУБЛИРОВАНИЕ: Сообщение {post_id} уже было обработано!")
                 return
             
             # Добавляем сообщение в список обработанных
             self.processed_messages.add(post_id)
+            log_with_timestamp(f"✅ Сообщение {post_id} добавлено в обработанные. Всего: {len(self.processed_messages)}")
             
             # Ограничиваем размер кэша (оставляем последние 1000 сообщений)
             if len(self.processed_messages) > 1000:
                 self.processed_messages = set(list(self.processed_messages)[-500:])
+                log_with_timestamp(f"🧹 Очистка кэша сообщений. Осталось: {len(self.processed_messages)}")
             
             log_with_timestamp(f"📨 Получено сообщение: '{message}' от пользователя {user_id}")
             
             # Проверяем интерактивные действия (нажатие кнопок)
             if self._is_interactive_action(post):
+                log_with_timestamp(f"🔘 Обрабатываем как интерактивную команду")
                 await self._handle_interactive_action(post, channel_id)
                 return
             
@@ -218,16 +275,22 @@ class MattermostBot:
             log_with_timestamp(f"🤖 Сообщение для бота: {is_for_bot}")
             
             if not is_for_bot:
+                log_with_timestamp(f"🚫 Сообщение игнорируется")
                 return
             
             # Получаем или создаем сессию пользователя
             session = self._get_user_session(user_id)
+            log_with_timestamp(f"👤 Состояние пользователя: {session.get('state', 'неизвестно')}")
             
             # Обрабатываем действие пользователя
+            log_with_timestamp(f"⚙️ Начинаем обработку действия пользователя")
             await self._process_user_action(user_id, channel_id, message, post, session)
+            log_with_timestamp(f"✅ Обработка действия завершена")
             
         except Exception as e:
-            print(f"Ошибка при обработке сообщения: {str(e)}")
+            print(f"❌ Ошибка при обработке сообщения: {str(e)}")
+            import traceback
+            traceback.print_exc()
             await self._send_error_message(channel_id, "Произошла ошибка при обработке сообщения")
     
     def _is_interactive_action(self, post: Dict) -> bool:
@@ -774,7 +837,9 @@ class MattermostBot:
     async def _send_message(self, channel_id: str, message: str, attachments: List = None, file_ids: List = None):
         """Отправляет сообщение в канал"""
         try:
-            print(f"📤 Попытка отправить сообщение в канал {channel_id}: '{message[:50]}...'")
+            log_with_timestamp(f"📤 ОТПРАВКА: Готовим сообщение в канал {channel_id}")
+            log_with_timestamp(f"   Длина сообщения: {len(message)} символов")
+            log_with_timestamp(f"   Начало сообщения: '{message[:100]}...'")
             
             post_data = {
                 'channel_id': channel_id,
@@ -783,19 +848,23 @@ class MattermostBot:
             
             if attachments:
                 post_data['props'] = {'attachments': attachments}
-                print(f"📎 С вложениями: {len(attachments)}")
+                log_with_timestamp(f"📎 С вложениями: {len(attachments)}")
             
             if file_ids:
                 post_data['file_ids'] = file_ids
-                print(f"📁 С файлами: {len(file_ids)}")
+                log_with_timestamp(f"📁 С файлами: {len(file_ids)}")
             
+            log_with_timestamp(f"🚀 Отправляем сообщение через API...")
             result = self.driver.posts.create_post(post_data)
-            print(f"✅ Сообщение отправлено успешно. ID поста: {result.get('id', 'неизвестно')}")
+            post_id = result.get('id', 'неизвестно')
+            log_with_timestamp(f"✅ Сообщение отправлено успешно. ID поста: {post_id}")
             
         except Exception as e:
-            print(f"❌ Ошибка при отправке сообщения: {str(e)}")
-            print(f"   Канал: {channel_id}")
-            print(f"   Сообщение: {message[:100]}")
+            log_with_timestamp(f"❌ Ошибка при отправке сообщения: {str(e)}")
+            log_with_timestamp(f"   Канал: {channel_id}")
+            log_with_timestamp(f"   Сообщение: {message[:100]}")
+            import traceback
+            traceback.print_exc()
             raise
     
     async def _send_error_message(self, channel_id: str, error_text: str):
