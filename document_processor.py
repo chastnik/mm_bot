@@ -222,22 +222,39 @@ class DocumentProcessor:
             
             all_content = f"--- ГЛАВНАЯ СТРАНИЦА: {main_page_title} ---\n{main_page_content}\n"
             
-            # Добавляем содержимое всех дочерних страниц
+            # Добавляем содержимое всех дочерних страниц И их вложений
+            all_child_attachments = []
             for page_info in all_pages:
                 child_content, child_title = self._fetch_confluence_page_by_id(page_info['id'])
                 level_indent = "  " * page_info['level']  # Отступ для показа уровня вложенности
                 all_content += f"\n--- {level_indent}ДОЧЕРНЯЯ СТРАНИЦА (уровень {page_info['level']}): {child_title} ---\n{child_content}\n"
+                
+                # ВАЖНО: Получаем вложения с каждой дочерней страницы
+                child_attachments = self._get_page_attachments(page_info['id'])
+                for child_attachment in child_attachments:
+                    child_attachment['source_page'] = child_title  # Помечаем источник
+                    all_child_attachments.append(child_attachment)
+                    print(f"📎 Найден файл на дочерней странице '{child_title}': {child_attachment['title']}")
             
-            # Добавляем содержимое вложенных файлов
+            # Добавляем содержимое вложенных файлов с главной страницы
             for attachment in attachments:
                 file_content = self._extract_attachment_content(attachment)
                 if file_content:
-                    all_content += f"\n--- ВЛОЖЕННЫЙ ФАЙЛ: {attachment['title']} ---\n{file_content}\n"
+                    all_content += f"\n--- ВЛОЖЕННЫЙ ФАЙЛ (главная страница): {attachment['title']} ---\n{file_content}\n"
+            
+            # Добавляем содержимое вложенных файлов с дочерних страниц
+            for attachment in all_child_attachments:
+                file_content = self._extract_attachment_content(attachment)
+                if file_content:
+                    source_page = attachment.get('source_page', 'неизвестная страница')
+                    all_content += f"\n--- ВЛОЖЕННЫЙ ФАЙЛ (со страницы '{source_page}'): {attachment['title']} ---\n{file_content}\n"
             
             total_pages = len(all_pages) + 1
-            total_attachments = len(attachments)
+            total_attachments = len(attachments) + len(all_child_attachments)
+            main_attachments_count = len(attachments)
+            child_attachments_count = len(all_child_attachments)
             
-            print(f"✅ Обработано: главная страница + {len(all_pages)} дочерних + {total_attachments} файлов")
+            print(f"✅ Обработано: главная страница + {len(all_pages)} дочерних + {main_attachments_count} файлов (главная) + {child_attachments_count} файлов (дочерние)")
             
             return {
                 'name': f"Confluence: {main_page_title} (+ {len(all_pages)} дочерних страниц + {total_attachments} файлов)",
@@ -246,7 +263,9 @@ class DocumentProcessor:
                 'text': all_content,
                 'pages': total_pages,
                 'child_pages_count': len(all_pages),
-                'attachments_count': total_attachments
+                'attachments_count': total_attachments,
+                'main_attachments_count': main_attachments_count,
+                'child_attachments_count': child_attachments_count
             }
             
         except Exception as e:
@@ -609,7 +628,24 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
             for attachment in data.get('results', []):
                 # Фильтруем только текстовые файлы и документы
                 file_type = attachment.get('metadata', {}).get('mediaType', '').lower()
-                if any(ext in file_type for ext in ['pdf', 'doc', 'txt', 'rtf', 'excel', 'spreadsheet']):
+                file_name = attachment['title'].lower()
+                
+                # Расширенная проверка типов файлов (по MIME типу и расширению)
+                supported_types = [
+                    'pdf', 'doc', 'docx', 'txt', 'rtf', 'excel', 'spreadsheet', 'xlsx', 'xls',
+                    'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    'text/plain', 'application/rtf'
+                ]
+                
+                supported_extensions = ['.pdf', '.doc', '.docx', '.txt', '.rtf', '.xls', '.xlsx']
+                
+                is_supported = (
+                    any(ext in file_type for ext in supported_types) or
+                    any(file_name.endswith(ext) for ext in supported_extensions)
+                )
+                
+                if is_supported:
                     attachments.append({
                         'id': attachment['id'],
                         'title': attachment['title'],
@@ -617,6 +653,8 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
                         'download_url': attachment['_links']['download']
                     })
                     print(f"📎 Найден вложенный файл: {attachment['title']} ({file_type})")
+                else:
+                    print(f"⏭️ Пропускаем неподдерживаемый файл: {attachment['title']} ({file_type})")
                 
             return attachments
             
