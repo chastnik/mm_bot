@@ -81,6 +81,10 @@ def test_llm_connection():
             "stream": False,
             "messages": [
                 {
+                    "role": "system",
+                    "content": "/no_think"
+                },
+                {
                     "role": "user",
                     "content": "Привет! Ответь кратко: сколько будет 2+2?"
                 }
