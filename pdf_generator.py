@@ -9,7 +9,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import os
 import io
 
@@ -158,7 +158,7 @@ class PDFGenerator:
         ))
     
     def generate_report(self, analysis_result: Dict[str, Any], project_types: List[str], 
-                       documents: List[Dict[str, Any]] = None) -> bytes:
+                       documents: Optional[List[Dict[str, Any]]] = None) -> bytes:
         """
         Генерирует PDF отчет с результатами анализа
         
@@ -179,11 +179,15 @@ class PDFGenerator:
         # Создаем содержимое отчета
         story = []
         
+        # Название департамента
+        story.append(Paragraph("БИТ.Цифра", self.styles['CustomHeading2']))
+        story.append(Spacer(1, 8))
+        
         # Заголовок
         story.append(Paragraph("Отчет по анализу документации ИТ проекта", self.styles['CustomTitle']))
         story.append(Spacer(1, 12))
         
-        # Информация о анализе
+        # Информация об анализе
         story.extend(self._create_analysis_info(project_types, analyzed_documents))
         
         # Сводка результатов
