@@ -191,13 +191,13 @@ class LLMAnalyzer:
                 context += f"Формат: {doc['format']}\n"
                 context += f"ИСТОЧНИК: Файл '{doc['name']}'\n"
             elif doc['type'] == 'confluence':
-                context += f"URL: {doc['url']}\n"
+                context += f"ПОЛНЫЙ URL: {doc['url']}\n"
                 # Для Confluence документов с множественными источниками
                 if 'child_pages_count' in doc and doc['child_pages_count'] > 0:
                     context += f"СТРУКТУРА: Главная страница + {doc['child_pages_count']} дочерних страниц\n"
                     if 'main_attachments_count' in doc:
                         context += f"ФАЙЛЫ: {doc['main_attachments_count']} на главной, {doc.get('child_attachments_count', 0)} на дочерних\n"
-                context += f"ИСТОЧНИК: Confluence страница и вложенные файлы\n"
+                context += f"ИСТОЧНИК: Confluence страница '{doc['url']}' и все вложенные файлы\n"
                 
             context += f"Количество страниц: {doc['pages']}\n"
             context += "\nСОДЕРЖИМОЕ (с разметкой источников):\n"
@@ -214,25 +214,25 @@ class LLMAnalyzer:
                 if line.startswith('--- ВЛОЖЕННЫЙ ФАЙЛ'):
                     if 'главная страница' in line:
                         file_name = line.split(':')[1].split('---')[0].strip()
-                        current_source = f"[ФАЙЛ: {file_name}, CONFLUENCE: Главная страница]"
+                        current_source = f"[ФАЙЛ: {file_name}, CONFLUENCE: Главная страница, URL: {doc.get('url', 'нет URL')}]"
                     elif 'со страницы' in line:
                         # Извлекаем название файла и страницы
                         parts = line.split("'")
                         if len(parts) >= 4:
                             confluence_page = parts[1]
                             file_name = parts[3].replace('):', '').strip()
-                            current_source = f"[ФАЙЛ: {file_name}, CONFLUENCE: {confluence_page}]"
+                            current_source = f"[ФАЙЛ: {file_name}, CONFLUENCE: {confluence_page}, BASE URL: {doc.get('url', 'нет URL')}]"
                     enhanced_content.append(f"\n{current_source}")
                     enhanced_content.append(line)
                 elif line.startswith('--- ДОЧЕРНЯЯ СТРАНИЦА'):
                     # Извлекаем название страницы Confluence
                     page_title = line.split(':')[1].split('---')[0].strip()
-                    current_source = f"[CONFLUENCE: {page_title}]"
+                    current_source = f"[CONFLUENCE: {page_title}, BASE URL: {doc.get('url', 'нет URL')}]"
                     enhanced_content.append(f"\n{current_source}")
                     enhanced_content.append(line)
                 elif line.startswith('--- ГЛАВНАЯ СТРАНИЦА'):
                     page_title = line.split(':')[1].split('---')[0].strip()
-                    current_source = f"[CONFLUENCE: {page_title} (главная)]"
+                    current_source = f"[CONFLUENCE: {page_title} (главная), ПОЛНЫЙ URL: {doc.get('url', 'нет URL')}]"
                     enhanced_content.append(f"\n{current_source}")
                     enhanced_content.append(line)
                 else:
@@ -320,7 +320,7 @@ class LLMAnalyzer:
         for i, artifact in enumerate(artifacts_batch, 1):
             prompt += f"""**АРТЕФАКТ: {artifact}**
 * СТАТУС: [НАЙДЕН / НЕ НАЙДЕН / ЧАСТИЧНО НАЙДЕН]
-* ИСТОЧНИК: [Конкретный файл и страница, где найден]
+* ИСТОЧНИК: [Укажи ПОЛНОЕ название документа/файла И номер страницы/раздела ИЛИ полный URL Confluence страницы]
 * ОПИСАНИЕ: [Краткое описание найденной информации]
 
 """
@@ -332,6 +332,15 @@ class LLMAnalyzer:
 3. НЕ меняй названия артефактов - копируй их точно
 4. Заполни только СТАТУС, ИСТОЧНИК и ОПИСАНИЕ
 5. Если артефакт не найден, напиши СТАТУС: НЕ НАЙДЕН
+
+ТРЕБОВАНИЯ К ИСТОЧНИКАМ:
+• Для файлов: укажи ПОЛНОЕ название файла + номер страницы/раздела
+• Для Confluence: укажи ПОЛНЫЙ URL страницы ИЛИ название страницы
+• НЕ сокращай названия - используй полные имена
+• Примеры хороших источников:
+  - "Техническое задание v2.1.docx, стр. 15"
+  - "https://confluence.1solution.ru/display/PROJECT/Architecture"
+  - "Confluence: Архитектурное решение системы (главная страница)"
 
 НАЧИНАЙ АНАЛИЗ:
 """

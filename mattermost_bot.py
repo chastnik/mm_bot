@@ -407,6 +407,10 @@ class MattermostBot:
                 # Сразу переходим к выбору типов проектов
                 await self._ask_project_types_with_selector(channel_id, session)
                 return
+            else:
+                # Для команд привет/help отправляем приветственное сообщение и завершаем
+                await self._send_welcome_message(channel_id)
+                return
         
         # Команды для состояния asking_more_documents
         if session.get('state') == 'asking_more_documents':
