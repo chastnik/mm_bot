@@ -1,4 +1,4 @@
-# Mattermost Document Analyzer Bot 🤖📄
+# BIT.Digital Mattermost Document Analyzer Bot 🤖📄
 
 [![GitHub](https://img.shields.io/badge/GitHub-chastnik%2Fmm__bot-blue?style=flat&logo=github)](https://github.com/chastnik/mm_bot)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat&logo=python)](https://www.python.org/)
