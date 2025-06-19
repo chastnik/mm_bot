@@ -897,14 +897,14 @@ class MattermostBot:
             'waiting_for_documents': False
         })
     
-    async def _send_message(self, channel_id: str, message: str, attachments: List = None, file_ids: List = None):
+    async def _send_message(self, channel_id: str, message: str, attachments: Optional[List[Dict[str, Any]]] = None, file_ids: Optional[List[str]] = None):
         """Отправляет сообщение в канал"""
         try:
             log_with_timestamp(f"📤 ОТПРАВКА: Готовим сообщение в канал {channel_id}")
             log_with_timestamp(f"   Длина сообщения: {len(message)} символов")
             log_with_timestamp(f"   Начало сообщения: '{message[:100]}...'")
             
-            post_data = {
+            post_data: Dict[str, Any] = {
                 'channel_id': channel_id,
                 'message': message
             }
