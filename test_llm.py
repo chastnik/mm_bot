@@ -21,7 +21,7 @@ def test_llm_connection():
     llm_config = LLMConfig(
         proxy_token=os.getenv('LLM_PROXY_TOKEN', ''),
         base_url=os.getenv('LLM_BASE_URL', 'https://llm.1bitai.ru'),
-        model=os.getenv('LLM_MODEL', 'llama3.1:8b-instruct-fp16')
+        model=os.getenv('LLM_MODEL', 'qwen3:14b')
     )
     
     print(f"📝 Настройки:")
