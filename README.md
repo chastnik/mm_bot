@@ -177,13 +177,6 @@ curl -H "Authorization: Bearer your_token" \
      https://your-mattermost-server.com/api/v4/users/me
 ```
 
-### Проблемы с OpenAI API
-```bash
-# Проверьте API ключ
-curl -H "Authorization: Bearer sk-your-key" \
-     https://api.openai.com/v1/models
-```
-
 ### Проблемы с SSL соединениями
 Запустите диагностический скрипт:
 ```bash
