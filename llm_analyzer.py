@@ -3,7 +3,7 @@
 """
 import requests
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from config import ARTIFACTS_STRUCTURE
 
 class LLMAnalyzer:
@@ -65,7 +65,7 @@ class LLMAnalyzer:
                 print(f"🔍 Этап {batch_num}/{len(artifact_batches)}: анализирую {len(artifacts_batch)} артефактов...")
                 
                 # Создаем промпт для текущего батча
-                prompt = self._create_analysis_prompt(context, artifacts_batch, batch_num, len(artifact_batches))
+                prompt = self._create_analysis_prompt(context, artifacts_batch, batch_num, len(artifacts_batch))
                 
                 # Отправляем запрос к LLM
                 response = self._send_llm_request(prompt)
@@ -100,14 +100,14 @@ class LLMAnalyzer:
                         combined_result['summary']['total_artifacts'] += 1
             
             # Добавляем информацию о проанализированных документах
-            combined_result['analyzed_documents'] = self._prepare_documents_info(documents)
+            combined_result['analyzed_documents'] = self._prepare_documents_info(documents or [])
             
             print(f"🎉 Поэтапный анализ завершен: {combined_result['summary']['found_count']}/{combined_result['summary']['total_artifacts']} артефактов найдено")
             return combined_result
             
         except Exception as e:
             print(f"❌ Ошибка при поэтапном анализе документов: {str(e)}")
-            return self._create_empty_result(project_types, documents)
+            return self._create_empty_result(project_types, documents or [])
     
     def _send_llm_request(self, prompt: str) -> str:
         """Отправляет запрос к корпоративной LLM"""
@@ -118,6 +118,10 @@ class LLMAnalyzer:
                 "model": self.config.model,
                 "stream": self.config.stream,
                 "messages": [
+                    {
+                        "role": "system",
+                        "content": "/no_think"
+                    },
                     {
                         "role": "user",
                         "content": prompt
@@ -347,13 +351,15 @@ class LLMAnalyzer:
         
         return prompt
     
-    def _parse_llm_response(self, response_text: str, expected_artifacts: List[str] = None) -> Dict[str, Any]:
+    def _parse_llm_response(self, response_text: str, expected_artifacts: Optional[List[str]] = None) -> Dict[str, Any]:
         """Парсит ответ LLM и структурирует результат"""
+        if expected_artifacts is None:
+            expected_artifacts = []
         result = {
             'found_artifacts': [],
             'not_found_artifacts': [],
             'partially_found_artifacts': [],
-            'analyzed_documents': [],  # Будет заполнено позже
+            'analyzed_documents': [],
             'summary': {
                 'total_artifacts': 0,
                 'found_count': 0,
@@ -362,153 +368,79 @@ class LLMAnalyzer:
             }
         }
         
-        # ПРИНУДИТЕЛЬНЫЙ ПАРСИНГ - ВСЕГДА используем ожидаемые артефакты
-        print(f"🔍 ПРИНУДИТЕЛЬНЫЙ парсинг ответа LLM:")
-        print(f"   Длина ответа: {len(response_text)} символов")
-        print(f"   Ожидаемые артефакты: {expected_artifacts}")
-        print(f"   Количество ожидаемых артефактов: {len(expected_artifacts) if expected_artifacts else 0}")
-        print(f"   Первые 500 символов: {response_text[:500]}")
-        
         try:
+            if not expected_artifacts:
+                print(f"⚠️ expected_artifacts не передан или пуст - нельзя выполнить анализ")
+                return result
             # ВСЕГДА используем принудительную логику, если есть ожидаемые артефакты
-            if expected_artifacts:
-                print(f"🔧 Принудительный режим: создаю результаты для {len(expected_artifacts)} ожидаемых артефактов")
-                
-                # Сначала разбиваем ответ на блоки для извлечения информации
-                import re
-                blocks = []
-                if '**АРТЕФАКТ:' in response_text:
-                    blocks = response_text.split('**АРТЕФАКТ:')[1:]
-                elif '**' in response_text:
-                    # Ищем любые блоки с звездочками
-                    artifact_pattern = r'\*\*\s*([^*\n]+?)\s*\*\*'
-                    matches = re.finditer(artifact_pattern, response_text, re.MULTILINE | re.IGNORECASE)
-                    for match in matches:
-                        start_pos = match.start()
-                        # Найдем следующий блок или конец текста
-                        remaining_text = response_text[match.end():]
-                        next_match = re.search(artifact_pattern, remaining_text)
-                        if next_match:
-                            end_pos = match.end() + next_match.start()
-                        else:
-                            end_pos = len(response_text)
-                        blocks.append(response_text[start_pos:end_pos])
-                
-                print(f"   Найдено {len(blocks)} блоков в ответе")
-                
-                for i, artifact_name in enumerate(expected_artifacts):
-                    print(f"   📋 Обрабатываю артефакт {i+1}: '{artifact_name}'")
-                    
-                    # Ищем статус артефакта в тексте
-                    status = 'НЕ НАЙДЕН'
-                    source = 'Не указан'
-                    description = 'Информация не найдена'
-                    
-                    # Способ 1: Пытаемся найти соответствующий блок по порядку
-                    if i < len(blocks):
-                        block = blocks[i]
-                        artifact_info = self._parse_artifact_block(block)
-                        if artifact_info and artifact_info.get('status'):
-                            status = artifact_info['status']
-                            source = artifact_info.get('source', 'Из ответа LLM')
-                            description = artifact_info.get('description', 'Найдено в анализе')
-                            print(f"      ✅ Информация найдена в блоке {i+1}")
-                    
-                    # Способ 2: Ищем упоминание артефакта в тексте ответа
-                    if status == 'НЕ НАЙДЕН':
-                        # Ищем ключевые слова артефакта в ответе
-                        artifact_words = artifact_name.lower().split()
-                        response_lower = response_text.lower()
-                        
-                        # Если большинство слов артефакта упоминается в ответе
-                        mentioned_words = sum(1 for word in artifact_words if word in response_lower)
-                        if mentioned_words >= len(artifact_words) * 0.6:  # 60% слов упоминается
-                            # Ищем статус в тексте
-                            if any(word in response_lower for word in ['найден', 'есть', 'содержит', 'присутствует']):
-                                status = 'НАЙДЕН'
-                                description = f'Упоминается в ответе (совпадение слов: {mentioned_words}/{len(artifact_words)})'
-                                source = 'Определено по ключевым словам'
-                                print(f"      🔍 Найдено по ключевым словам")
-                    
-                    # Создаем информацию об артефакте с принудительным названием
-                    final_artifact_info = {
-                        'name': artifact_name,  # ПРИНУДИТЕЛЬНО используем ожидаемое название
-                        'status': status,
-                        'source': source,
-                        'description': description,
-                        'unique_key': artifact_name
-                    }
-                    
-                    print(f"   ✅ Создан артефакт: {final_artifact_info['name']} - {final_artifact_info['status']}")
-                    print(f"      📂 Источник: {final_artifact_info.get('source', 'не указан')}")
-                    
-                    status_upper = final_artifact_info['status'].upper()
-                    
-                    # Улучшенная логика определения статуса
-                    if 'НАЙДЕН' in status_upper:
-                        if 'НЕ НАЙДЕН' in status_upper:
-                            result['not_found_artifacts'].append(final_artifact_info)
-                            result['summary']['not_found_count'] += 1
-                        elif 'ЧАСТИЧНО' in status_upper or 'PARTIAL' in status_upper:
-                            result['partially_found_artifacts'].append(final_artifact_info)
-                            result['summary']['partially_found_count'] += 1
-                        else:
-                            result['found_artifacts'].append(final_artifact_info)
-                            result['summary']['found_count'] += 1
-                    elif any(keyword in status_upper for keyword in ['FOUND', 'ЕСТЬ', 'ПРИСУТСТВУЕТ']):
-                        result['found_artifacts'].append(final_artifact_info)
-                        result['summary']['found_count'] += 1
-                    elif any(keyword in status_upper for keyword in ['PARTIAL', 'ЧАСТИЧН']):
+            print(f"🔧 Принудительный режим: создаю результаты для {len(expected_artifacts)} ожидаемых артефактов")
+            import re
+            blocks = []
+            if '**АРТЕФАКТ:' in response_text:
+                blocks = response_text.split('**АРТЕФАКТ:')[1:]
+            elif '**' in response_text:
+                artifact_pattern = r'\*\*\s*([^*\n]+?)\s*\*\*'
+                matches = re.finditer(artifact_pattern, response_text, re.MULTILINE | re.IGNORECASE)
+                for match in matches:
+                    start_pos = match.start()
+                    remaining_text = response_text[match.end():]
+                    next_match = re.search(artifact_pattern, remaining_text)
+                    if next_match:
+                        end_pos = match.end() + next_match.start()
+                    else:
+                        end_pos = len(response_text)
+                    blocks.append(response_text[start_pos:end_pos])
+            print(f"   Найдено {len(blocks)} блоков в ответе")
+            for i, artifact_name in enumerate(expected_artifacts):
+                print(f"   📋 Обрабатываю артефакт {i+1}: '{artifact_name}'")
+                status = 'НЕ НАЙДЕН'
+                source = 'Не указан'
+                description = 'Информация не найдена'
+                if i < len(blocks):
+                    block = blocks[i]
+                    artifact_info = self._parse_artifact_block(block)
+                    if artifact_info and artifact_info.get('status'):
+                        status = artifact_info['status']
+                        source = artifact_info.get('source', 'Из ответа LLM')
+                        description = artifact_info.get('description', 'Найдено в анализе')
+                        print(f"      ✅ Информация найдена в блоке {i+1}")
+                final_artifact_info = {
+                    'name': artifact_name,
+                    'status': status,
+                    'source': source,
+                    'description': description,
+                    'unique_key': artifact_name
+                }
+                print(f"   ✅ Создан артефакт: {final_artifact_info['name']} - {final_artifact_info['status']}")
+                print(f"      📂 Источник: {final_artifact_info.get('source', 'не указан')}")
+                status_upper = final_artifact_info['status'].upper()
+                if 'НАЙДЕН' in status_upper:
+                    if 'НЕ НАЙДЕН' in status_upper:
+                        result['not_found_artifacts'].append(final_artifact_info)
+                        result['summary']['not_found_count'] += 1
+                    elif 'ЧАСТИЧНО' in status_upper or 'PARTIAL' in status_upper:
                         result['partially_found_artifacts'].append(final_artifact_info)
                         result['summary']['partially_found_count'] += 1
                     else:
-                        result['not_found_artifacts'].append(final_artifact_info)
-                        result['summary']['not_found_count'] += 1
-                    
-                    result['summary']['total_artifacts'] += 1
-            else:
-                print(f"⚠️ expected_artifacts не передан - нельзя выполнить анализ")
-                # Без ожидаемых артефактов не можем гарантировать правильный результат
-                return result
-            
-            print(f"📊 Результат парсинга: {result['summary']['total_artifacts']} артефактов обработано")
-            
-            # Если не удалось распарсить артефакты, создаем их принудительно
-            if expected_artifacts and result['summary']['total_artifacts'] == 0:
-                print(f"⚠️ Принудительное создание артефактов для {len(expected_artifacts)} ожидаемых элементов")
-                for artifact in expected_artifacts:
-                    # Пытаемся найти упоминание артефакта в тексте ответа
-                    if artifact.lower() in response_text.lower():
-                        status = 'НАЙДЕН' if any(word in response_text.lower() for word in ['найден', 'есть', 'содержит', 'присутствует']) else 'НЕ НАЙДЕН'
-                    else:
-                        status = 'НЕ НАЙДЕН'
-                    
-                    artifact_info = {
-                        'name': artifact,
-                        'status': status,
-                        'source': 'Автоматически определено',
-                        'description': f'Статус определен автоматически на основе анализа ответа LLM',
-                        'unique_key': artifact
-                    }
-                    
-                    if status == 'НАЙДЕН':
-                        result['found_artifacts'].append(artifact_info)
+                        result['found_artifacts'].append(final_artifact_info)
                         result['summary']['found_count'] += 1
-                    else:
-                        result['not_found_artifacts'].append(artifact_info)
-                        result['summary']['not_found_count'] += 1
-                    
-                    result['summary']['total_artifacts'] += 1
-                
-                print(f"✅ Принудительно создано {result['summary']['total_artifacts']} артефактов")
-            
+                elif any(keyword in status_upper for keyword in ['FOUND', 'ЕСТЬ', 'ПРИСУТСТВУЕТ']):
+                    result['found_artifacts'].append(final_artifact_info)
+                    result['summary']['found_count'] += 1
+                elif any(keyword in status_upper for keyword in ['PARTIAL', 'ЧАСТИЧН']):
+                    result['partially_found_artifacts'].append(final_artifact_info)
+                    result['summary']['partially_found_count'] += 1
+                else:
+                    result['not_found_artifacts'].append(final_artifact_info)
+                    result['summary']['not_found_count'] += 1
+                result['summary']['total_artifacts'] += 1
+            print(f"📊 Результат парсинга: {result['summary']['total_artifacts']} артефактов обработано")
         except Exception as e:
             print(f"❌ Ошибка при парсинге ответа LLM: {str(e)}")
             print(f"📋 Полный ответ LLM для отладки:")
             print(f"─" * 80)
             print(response_text[:2000] + ("..." if len(response_text) > 2000 else ""))
             print(f"─" * 80)
-            
         return result
     
     def _parse_artifact_block(self, block: str) -> Dict[str, str]:
@@ -625,16 +557,16 @@ class LLMAnalyzer:
             else:
                 print(f"   ❌ Недостаточно данных: name='{artifact_info['name']}', status='{artifact_info['status']}'")
                 print(f"   📄 Блок содержимого: {block[:200]}...")
-                return None
+                return {}
             
         except Exception as e:
             print(f"❌ Ошибка при парсинге блока артефакта: {str(e)}")
-            return None
+            return {}
     
-    def _prepare_documents_info(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Подготавливает информацию о проанализированных документах"""
+    def _prepare_documents_info(self, documents: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        if documents is None:
+            documents = []
         documents_info = []
-        
         for doc in documents:
             doc_info = {
                 'name': doc.get('name', 'Неизвестный документ'),
@@ -642,21 +574,16 @@ class LLMAnalyzer:
                 'pages': doc.get('pages', 0),
                 'text_length': len(doc.get('text', ''))
             }
-            
-            # Добавляем специфичные поля в зависимости от типа документа
             if doc['type'] == 'file':
                 doc_info['format'] = doc.get('format', '')
                 doc_info['size_bytes'] = doc.get('size', 0)
             elif doc['type'] == 'confluence':
                 doc_info['url'] = doc.get('url', '')
                 doc_info['last_modified'] = doc.get('last_modified', '')
-            
             documents_info.append(doc_info)
-        
         return documents_info
     
-    def _create_empty_result(self, project_types: List[str], documents: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Создает пустой результат в случае ошибки"""
+    def _create_empty_result(self, project_types: List[str], documents: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         result = {
             'found_artifacts': [],
             'not_found_artifacts': [],
@@ -669,11 +596,5 @@ class LLMAnalyzer:
             },
             'error': 'Не удалось проанализировать документы'
         }
-        
-        # Добавляем информацию о документах, даже если анализ не удался
-        if documents:
-            result['analyzed_documents'] = self._prepare_documents_info(documents)
-        else:
-            result['analyzed_documents'] = []
-        
+        result['analyzed_documents'] = self._prepare_documents_info(documents or [])
         return result 
