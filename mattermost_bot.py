@@ -176,6 +176,7 @@ class MattermostBot:
     async def _listen_for_messages(self):
         """Основной цикл прослушивания сообщений"""
         last_post_time = int(time.time() * 1000)  # Время в миллисекундах
+        last_channel_refresh = 0  # Время последнего обновления каналов
         print(f"👂 Начинаю слушать сообщения с времени: {last_post_time}")
         print(f"🔗 Подключен к каналам: {len(self.channels)}")
         for i, channel in enumerate(self.channels):
@@ -183,9 +184,15 @@ class MattermostBot:
         
         while self.running:
             try:
+                current_time = int(time.time() * 1000)
+                
+                # Обновляем список каналов каждые 30 секунд для обнаружения новых пользователей
+                if current_time - last_channel_refresh > 30000:  # 30 секунд
+                    await self._refresh_channels()
+                    last_channel_refresh = current_time
+                
                 # Собираем все новые сообщения из всех каналов
                 all_new_posts = []
-                current_time = int(time.time() * 1000)
                 
                 # Проверяем новые сообщения в каждом канале
                 for channel_idx, channel in enumerate(self.channels):
@@ -227,6 +234,32 @@ class MattermostBot:
             except Exception as e:
                 print(f"Ошибка в цикле прослушивания: {str(e)}")
                 await asyncio.sleep(5)
+    
+    async def _refresh_channels(self):
+        """Обновляет список каналов для обнаружения новых пользователей"""
+        try:
+            # Получаем все каналы заново
+            all_channels = []
+            for team in self.teams:
+                team_channels = self.driver.channels.get_channels_for_user(self.bot_user_id, team['id'])
+                all_channels.extend(team_channels)
+            
+            # Фильтруем Direct Messages
+            new_dm_channels = []
+            existing_channel_ids = {ch['id'] for ch in self.channels}
+            
+            for channel in all_channels:
+                if channel.get('type') == 'D' and channel['id'] not in existing_channel_ids:
+                    new_dm_channels.append(channel)
+                    print(f"🆕 Обнаружен новый Direct Message канал: '{channel.get('name', 'Безымянный')}' (ID: {channel['id']})")
+            
+            # Добавляем новые каналы в список мониторинга
+            if new_dm_channels:
+                self.channels.extend(new_dm_channels)
+                print(f"✅ Добавлено {len(new_dm_channels)} новых каналов. Всего каналов: {len(self.channels)}")
+            
+        except Exception as e:
+            print(f"❌ Ошибка при обновлении каналов: {str(e)}")
     
     async def _handle_message(self, post: Dict, channel_id: str):
         """Обработка входящего сообщения"""
