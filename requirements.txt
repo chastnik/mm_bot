@@ -23,7 +23,7 @@ pydantic==2.11.7
 pydantic_core==2.33.2
 PyPDF2==3.0.1
 python-docx==0.8.11
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 python-magic==0.4.27
 reportlab==4.0.7
 requests==2.31.0
