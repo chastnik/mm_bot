@@ -15,7 +15,7 @@ def test_imports():
     print("🔄 Тестирование импортов...")
     
     try:
-        from config import Config, PROJECT_TYPES, ARTIFACTS_STRUCTURE
+        from config import Config
         print("✅ config.py импортирован успешно")
     except ImportError as e:
         print(f"❌ Ошибка импорта config.py: {e}")

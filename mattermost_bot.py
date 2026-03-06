@@ -9,7 +9,7 @@ import urllib3
 import warnings
 from typing import Dict, List, Any, Optional
 from mattermostdriver import Driver
-from config import Config, PROJECT_TYPES, ARTIFACTS_STRUCTURE
+from config import Config
 from document_processor import DocumentProcessor
 from llm_analyzer import LLMAnalyzer
 from pdf_generator import PDFGenerator
@@ -28,8 +28,10 @@ class MattermostBot:
         self.config = config
         self.settings_db = SettingsDatabase(config.database.path)
         self.settings_db.initialize()
-        self.project_types = self.settings_db.load_project_types() or PROJECT_TYPES
-        self.artifacts_structure = self.settings_db.load_artifacts_structure() or ARTIFACTS_STRUCTURE
+        self.project_types = self.settings_db.load_project_types()
+        self.artifacts_structure = self.settings_db.load_artifacts_structure()
+        if not self.project_types or not self.artifacts_structure:
+            raise RuntimeError("Настройки проверки не загружены из БД")
         
         # Инициализация драйвера Mattermost
         # Извлекаем хост из URL без протокола

@@ -1,11 +1,11 @@
 """
 Хранение настроек проверки документов в SQLite с миграциями.
 """
+import hashlib
+import json
 import os
 import sqlite3
-from typing import Callable, Dict, List, Tuple
-
-from config import ARTIFACTS_STRUCTURE, PROJECT_TYPES
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 class SettingsDatabase:
@@ -13,6 +13,7 @@ class SettingsDatabase:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
+        self.seed_path = os.path.join(os.path.dirname(__file__), "settings_seed.json")
 
     def initialize(self) -> None:
         """Создает БД, применяет миграции и выполняет первичный seed."""
@@ -66,6 +67,11 @@ class SettingsDatabase:
                 }
         return structure
 
+    def get_seed_metadata(self) -> Optional[Dict[str, Any]]:
+        """Возвращает текущую метаинформацию о примененном seed."""
+        with self._connect() as conn:
+            return self._get_seed_metadata(conn)
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
@@ -87,6 +93,7 @@ class SettingsDatabase:
         """Применяет все непримененные миграции по порядку."""
         migrations: List[Tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
             (1, "create_settings_tables", self._migration_001_create_settings_tables),
+            (2, "create_seed_metadata_table", self._migration_002_create_seed_metadata_table),
         ]
         applied_rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
         applied_versions = {row["version"] for row in applied_rows}
@@ -134,39 +141,119 @@ class SettingsDatabase:
             """
         )
 
+    def _migration_002_create_seed_metadata_table(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS seed_metadata (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                seed_version INTEGER NOT NULL,
+                seed_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
     def _seed_defaults_if_needed(self, conn: sqlite3.Connection) -> None:
+        seed_data = self._load_seed_data()
+        seed_version = int(seed_data.get("seed_version", 1))
+        seed_hash = self._calculate_seed_hash(seed_data)
+        project_types_seed = seed_data.get("project_types", {})
+        artifacts_structure_seed = seed_data.get("artifacts_structure", {})
+
         project_types_count = conn.execute("SELECT COUNT(*) AS cnt FROM project_types").fetchone()["cnt"]
         sections_count = conn.execute("SELECT COUNT(*) AS cnt FROM artifact_sections").fetchone()["cnt"]
         artifacts_count = conn.execute("SELECT COUNT(*) AS cnt FROM artifacts").fetchone()["cnt"]
+        metadata = self._get_seed_metadata(conn)
 
-        if project_types_count == 0:
-            for order, (code, name) in enumerate(PROJECT_TYPES.items(), start=1):
+        is_empty = project_types_count == 0 and sections_count == 0 and artifacts_count == 0
+        seed_changed = metadata is None or metadata.get("seed_hash") != seed_hash
+        needs_sync = is_empty or seed_changed
+        if not needs_sync:
+            return
+
+        self._upsert_project_types(conn, project_types_seed)
+        self._upsert_artifacts_structure(conn, artifacts_structure_seed)
+        self._set_seed_metadata(conn, seed_version, seed_hash)
+
+    def _upsert_project_types(self, conn: sqlite3.Connection, project_types_seed: Dict[str, str]) -> None:
+        for order, (code, name) in enumerate(project_types_seed.items(), start=1):
+            conn.execute(
+                """
+                INSERT INTO project_types(code, name, sort_order, is_active, updated_at)
+                VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)
+                ON CONFLICT(code) DO UPDATE SET
+                    name = excluded.name,
+                    sort_order = excluded.sort_order,
+                    is_active = 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (code, name, order),
+            )
+
+    def _upsert_artifacts_structure(
+        self, conn: sqlite3.Connection, artifacts_structure_seed: Dict[str, Dict[str, Any]]
+    ) -> None:
+        for order, (section_code, section_data) in enumerate(artifacts_structure_seed.items(), start=1):
+            conn.execute(
+                """
+                INSERT INTO artifact_sections(code, name, scope, sort_order, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(code) DO UPDATE SET
+                    name = excluded.name,
+                    scope = excluded.scope,
+                    sort_order = excluded.sort_order,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (section_code, section_data["name"], self._section_scope(section_code), order),
+            )
+
+            for item_order, item_text in enumerate(section_data["items"], start=1):
                 conn.execute(
                     """
-                    INSERT INTO project_types(code, name, sort_order, is_active)
-                    VALUES (?, ?, ?, 1)
+                    INSERT INTO artifacts(section_code, item_text, sort_order, updated_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(section_code, item_text) DO UPDATE SET
+                        sort_order = excluded.sort_order,
+                        updated_at = CURRENT_TIMESTAMP
                     """,
-                    (code, name, order),
+                    (section_code, item_text, item_order),
                 )
 
-        if sections_count == 0 and artifacts_count == 0:
-            for order, (section_code, section_data) in enumerate(ARTIFACTS_STRUCTURE.items(), start=1):
-                conn.execute(
-                    """
-                    INSERT INTO artifact_sections(code, name, scope, sort_order)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (section_code, section_data["name"], self._section_scope(section_code), order),
-                )
+    def _get_seed_metadata(self, conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+        row = conn.execute(
+            "SELECT seed_version, seed_hash FROM seed_metadata WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return {"seed_version": row["seed_version"], "seed_hash": row["seed_hash"]}
 
-                for item_order, item_text in enumerate(section_data["items"], start=1):
-                    conn.execute(
-                        """
-                        INSERT INTO artifacts(section_code, item_text, sort_order)
-                        VALUES (?, ?, ?)
-                        """,
-                        (section_code, item_text, item_order),
-                    )
+    def _set_seed_metadata(self, conn: sqlite3.Connection, seed_version: int, seed_hash: str) -> None:
+        conn.execute(
+            """
+            INSERT INTO seed_metadata(id, seed_version, seed_hash, updated_at)
+            VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                seed_version = excluded.seed_version,
+                seed_hash = excluded.seed_hash,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (seed_version, seed_hash),
+        )
+
+    def _calculate_seed_hash(self, seed_data: Dict[str, Any]) -> str:
+        canonical_json = json.dumps(seed_data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+    def _load_seed_data(self) -> Dict[str, Any]:
+        if not os.path.exists(self.seed_path):
+            raise FileNotFoundError(f"Не найден seed-файл настроек: {self.seed_path}")
+
+        with open(self.seed_path, "r", encoding="utf-8") as seed_file:
+            data = json.load(seed_file)
+
+        if "project_types" not in data or "artifacts_structure" not in data:
+            raise ValueError("Некорректный формат settings_seed.json")
+        return data
 
     def _section_scope(self, section_code: str) -> str:
         normalized = section_code.lower()

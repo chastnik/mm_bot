@@ -77,7 +77,8 @@ python3 main.py
 
 При запуске бот автоматически:
 - применяет миграции БД настроек;
-- выполняет первичное заполнение (если БД пустая).
+- выполняет первичное заполнение (если БД пустая);
+- сверяет `seed_version` и хеш `settings_seed.json` и при изменениях синхронизирует seed-данные в БД.
 
 ### Запуск с логированием
 ```bash
@@ -113,6 +114,77 @@ docker-compose up -d
 5. **Получение отчета**: Бот создаст и отправит PDF отчет
 6. **Новый анализ**: `🚀 Новый анализ`
 
+### 🗄️ Схема БД настроек
+
+```mermaid
+erDiagram
+    schema_migrations {
+        int version PK
+        string name
+        datetime applied_at
+    }
+
+    seed_metadata {
+        int id PK
+        int seed_version
+        string seed_hash
+        datetime updated_at
+    }
+
+    project_types {
+        string code PK
+        string name
+        int sort_order
+        int is_active
+        datetime created_at
+        datetime updated_at
+    }
+
+    artifact_sections {
+        string code PK
+        string name
+        string scope
+        int sort_order
+        datetime created_at
+        datetime updated_at
+    }
+
+    artifacts {
+        int id PK
+        string section_code FK
+        string item_text
+        int sort_order
+        datetime created_at
+        datetime updated_at
+    }
+
+    artifact_sections ||--o{ artifacts : contains
+```
+
+### 🔄 Схема процесса работы бота
+
+```mermaid
+flowchart TD
+    A[Запуск бота] --> B[Загрузка .env]
+    B --> C[Инициализация Settings DB]
+    C --> D[Миграции и синхронизация seed]
+    D --> E[Подключение к Mattermost]
+    E --> F[Ожидание сообщения в DM]
+
+    F --> G{Команда начать анализ?}
+    G -- Нет --> F
+    G -- Да --> H[Выбор типов проекта]
+    H --> I[Загрузка файлов/ссылок Confluence]
+    I --> J{Есть документы?}
+    J -- Нет --> I
+    J -- Да --> K[Обработка документов]
+    K --> L[LLM-анализ артефактов]
+    L --> M[Генерация PDF-отчета]
+    M --> N[Отправка результата в Mattermost]
+    N --> O[Сброс сессии]
+    O --> F
+```
+
 
 ## 📁 Структура проекта
 
@@ -125,6 +197,7 @@ mm_bot/
 ├── llm_analyzer.py        # Анализ с помощью LLM
 ├── settings_db.py         # Хранение настроек проверки в SQLite + миграции
 ├── init_settings_db.py    # Инициализация БД и первичный seed
+├── settings_seed.json     # Дефолтные настройки для первичного заполнения БД
 ├── gpt_analyzer.py        # GPT-специфичный анализатор
 ├── pdf_generator.py       # Генерация PDF отчетов
 ├── utils.py               # Вспомогательные функции

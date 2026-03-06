@@ -3,14 +3,13 @@
 """
 from typing import List, Dict, Any, Optional
 from openai import OpenAI, APITimeoutError
-from config import ARTIFACTS_STRUCTURE
 
 class LLMAnalyzer:
     """Класс для анализа документов с помощью корпоративной LLM"""
     
     def __init__(self, llm_config, artifacts_structure: Optional[Dict[str, Dict[str, List[str]]]] = None):
         self.config = llm_config
-        self.artifacts_structure = artifacts_structure or ARTIFACTS_STRUCTURE
+        self.artifacts_structure = artifacts_structure or {}
         self.base_url = llm_config.base_url.rstrip('/')
         self.client = OpenAI(
             api_key=llm_config.proxy_token,

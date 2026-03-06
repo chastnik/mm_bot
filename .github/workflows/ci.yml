@@ -1,15 +1,20 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
       - master
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-and-shell-checks:
-    name: Python and Shell checks
+    name: Python, DB and Shell checks
     runs-on: ubuntu-latest
 
     steps:
@@ -27,9 +32,57 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Create CI env file
+        run: |
+          cat > .env <<'EOF'
+          MATTERMOST_URL=https://example.com
+          MATTERMOST_TOKEN=test-token
+          MATTERMOST_USERNAME=test-user
+          MATTERMOST_PASSWORD=test-password
+          MATTERMOST_TEAM=test-team
+          MATTERMOST_SSL_VERIFY=true
+          CONFLUENCE_USERNAME=test-user
+          CONFLUENCE_PASSWORD=test-password
+          CONFLUENCE_BASE_URL=https://confluence.example.com
+          LLM_PROXY_TOKEN=test-token
+          LLM_BASE_URL=https://llm.example.com
+          LLM_MODEL=gpt-5
+          DEBUG=false
+          LOG_LEVEL=INFO
+          SETTINGS_DB_PATH=data/ci_settings.db
+          EOF
+
       - name: Validate Python syntax
         run: |
           python -m compileall -q .
+
+      - name: Validate settings DB migrations and seed
+        run: |
+          python init_settings_db.py
+
+      - name: Run local component smoke test
+        run: |
+          python - <<'PY'
+          from config import Config
+          from settings_db import SettingsDatabase
+          from llm_analyzer import LLMAnalyzer
+          from document_processor import DocumentProcessor
+          from pdf_generator import PDFGenerator
+
+          cfg = Config()
+          db = SettingsDatabase(cfg.database.path)
+          db.initialize()
+
+          project_types = db.load_project_types()
+          artifacts = db.load_artifacts_structure()
+          assert project_types, "project_types should not be empty"
+          assert artifacts, "artifacts_structure should not be empty"
+
+          DocumentProcessor(cfg.confluence)
+          LLMAnalyzer(cfg.llm, artifacts)
+          PDFGenerator()
+          print("Smoke test passed")
+          PY
 
       - name: Validate shell scripts syntax
         run: |
@@ -49,3 +102,7 @@ jobs:
       - name: Build Docker image
         run: |
           docker build -t ai-docs-bot:ci .
+
+      - name: Smoke test container startup commands
+        run: |
+          docker run --rm ai-docs-bot:ci python -m compileall -q .
