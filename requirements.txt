@@ -11,7 +11,7 @@ et_xmlfile==2.0.0
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
-idna==3.10
+idna==3.11
 jiter==0.10.0
 json5==0.9.14
 lxml==4.9.3
