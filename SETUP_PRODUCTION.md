@@ -110,12 +110,13 @@ MATTERMOST_SSL_VERIFY=true  # false для отключения SSL провер
 
 # === ОБЯЗАТЕЛЬНЫЕ НАСТРОЙКИ КОРПОРАТИВНОЙ LLM ===
 LLM_PROXY_TOKEN=your-llm-proxy-token
-LLM_BASE_URL=https://llm.1bitai.ru  # или адрес вашей LLM
-LLM_MODEL=llama3.3:70b  # или другая доступная модель
+LLM_BASE_URL=https://litellm.yourserver.ru  # LiteLLM proxy
+LLM_MODEL=gpt-5  # или другая доступная модель через LiteLLM
 
 # === НАСТРОЙКИ CONFLUENCE (ОПЦИОНАЛЬНО) ===
 CONFLUENCE_USERNAME=your-confluence-email@company.com
 CONFLUENCE_PASSWORD=your-confluence-app-password
+CONFLUENCE_BASE_URL=https://confluence.yourcompany.ru/
 
 # === ДОПОЛНИТЕЛЬНЫЕ НАСТРОЙКИ ===
 DEBUG=false

@@ -91,7 +91,12 @@ check_env_vars() {
         "MATTERMOST_URL"
         "MATTERMOST_TOKEN"  
         "MATTERMOST_USERNAME"
-        "OPENAI_API_KEY"
+        "LLM_PROXY_TOKEN"
+        "LLM_BASE_URL"
+        "LLM_MODEL"
+        "CONFLUENCE_USERNAME"
+        "CONFLUENCE_PASSWORD"
+        "CONFLUENCE_BASE_URL"
     )
     
     MISSING_VARS=()

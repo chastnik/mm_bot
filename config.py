@@ -23,8 +23,8 @@ class MattermostConfig:
 class LLMConfig:
     """Настройки подключения к корпоративной LLM"""
     proxy_token: str
-    base_url: str = "https://llm.1bitai.ru"
-    model: str = ""  # Читается из переменной окружения LLM_MODEL
+    base_url: str
+    model: str
     max_tokens: int = 4096
     stream: bool = False
     num_ctx: int = 65536  # 64K токенов контекста для обработки больших документов
@@ -34,7 +34,7 @@ class ConfluenceConfig:
     """Настройки подключения к Confluence"""
     username: str
     password: str
-    base_url: str = "https://confluence.1solution.ru/"
+    base_url: str
     
 class Config:
     """Основной класс конфигурации"""
@@ -51,13 +51,14 @@ class Config:
         
         self.llm = LLMConfig(
             proxy_token=os.getenv('LLM_PROXY_TOKEN', ''),
-            base_url=os.getenv('LLM_BASE_URL', 'https://llm.1bitai.ru'),
-            model=os.getenv('LLM_MODEL', 'llama3.3:70b')
+            base_url=os.getenv('LLM_BASE_URL', ''),
+            model=os.getenv('LLM_MODEL', '')
         )
         
         self.confluence = ConfluenceConfig(
             username=os.getenv('CONFLUENCE_USERNAME', ''),
-            password=os.getenv('CONFLUENCE_PASSWORD', '')
+            password=os.getenv('CONFLUENCE_PASSWORD', ''),
+            base_url=os.getenv('CONFLUENCE_BASE_URL', '')
         )
     
     def validate(self) -> bool:
@@ -69,9 +70,21 @@ class Config:
         if not self.llm.proxy_token:
             print("Ошибка: не настроен токен для корпоративной LLM")
             return False
+
+        if not self.llm.base_url:
+            print("Ошибка: не настроен LLM_BASE_URL")
+            return False
+
+        if not self.llm.model:
+            print("Ошибка: не настроен LLM_MODEL")
+            return False
             
         if not self.confluence.username or not self.confluence.password:
             print("Ошибка: не настроены параметры Confluence")
+            return False
+
+        if not self.confluence.base_url:
+            print("Ошибка: не настроен CONFLUENCE_BASE_URL")
             return False
             
         return True

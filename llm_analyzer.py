@@ -1,9 +1,8 @@
 """
 Модуль для анализа документов с помощью корпоративной LLM
 """
-import requests
-import json
 from typing import List, Dict, Any, Optional
+from openai import OpenAI, APITimeoutError
 from config import ARTIFACTS_STRUCTURE
 
 class LLMAnalyzer:
@@ -12,10 +11,11 @@ class LLMAnalyzer:
     def __init__(self, llm_config):
         self.config = llm_config
         self.base_url = llm_config.base_url.rstrip('/')
-        self.headers = {
-            'X-PROXY-AUTH': llm_config.proxy_token,
-            'Content-Type': 'application/json'
-        }
+        self.client = OpenAI(
+            api_key=llm_config.proxy_token,
+            base_url=self.base_url,
+            timeout=300.0
+        )
     
     def analyze_documents(self, documents: List[Dict[str, Any]], project_types: List[str]) -> Dict[str, Any]:
         """
@@ -112,12 +112,12 @@ class LLMAnalyzer:
     def _send_llm_request(self, prompt: str) -> str:
         """Отправляет запрос к корпоративной LLM"""
         try:
-            url = f"{self.base_url}/api/chat"
-            
-            payload = {
-                "model": self.config.model,
-                "stream": self.config.stream,
-                "messages": [
+            print(f"📡 Отправляю запрос к LLM через OpenAI Responses API: {self.base_url}")
+            print(f"🤖 Модель: {self.config.model}")
+
+            response = self.client.responses.create(
+                model=self.config.model,
+                input=[
                     {
                         "role": "system",
                         "content": "/no_think"
@@ -126,37 +126,17 @@ class LLMAnalyzer:
                         "role": "user",
                         "content": prompt
                     }
-                ],
-                "options": {
-                    "num_ctx": self.config.num_ctx  # 64K токенов контекста
-                }
-            }
-            
-            print(f"📡 Отправляю запрос к LLM: {url}")
-            print(f"🤖 Модель: {self.config.model}")
-            
-            response = requests.post(
-                url,
-                headers=self.headers,
-                json=payload,
-                timeout=300  # 5 минут timeout для больших документов и сложных промптов
+                ]
             )
-            
-            if response.status_code == 200:
-                response_data = response.json()
-                content = response_data.get('message', {}).get('content', '')
-                
-                if content:
-                    print(f"✅ Получен ответ от LLM ({len(content)} символов)")
-                    return content
-                else:
-                    print("⚠️ Получен пустой ответ от LLM")
-                    return ""
-            else:
-                print(f"❌ Ошибка HTTP {response.status_code}: {response.text}")
-                return ""
-                
-        except requests.exceptions.Timeout:
+
+            content = self._extract_response_text(response)
+            if content:
+                print(f"✅ Получен ответ от LLM ({len(content)} символов)")
+                return content
+
+            print("⚠️ Получен пустой ответ от LLM")
+            return ""
+        except APITimeoutError:
             print("⏱️ Таймаут при обращении к LLM")
             return ""
         except Exception as e:
@@ -166,22 +146,32 @@ class LLMAnalyzer:
     def get_available_models(self) -> List[str]:
         """Получает список доступных моделей"""
         try:
-            url = f"{self.base_url}/v1/models"
-            
-            response = requests.get(url, headers=self.headers, timeout=30)
-            
-            if response.status_code == 200:
-                models_data = response.json()
-                models = [model.get('id', '') for model in models_data.get('data', [])]
-                print(f"📋 Доступные модели: {', '.join(models)}")
-                return models
-            else:
-                print(f"❌ Ошибка получения моделей HTTP {response.status_code}")
-                return []
-                
+            models_response = self.client.models.list()
+            models = [model.id for model in models_response.data if getattr(model, 'id', '')]
+            print(f"📋 Доступные модели: {', '.join(models)}")
+            return models
         except Exception as e:
             print(f"❌ Ошибка при получении списка моделей: {str(e)}")
             return []
+
+    def _extract_response_text(self, response: Any) -> str:
+        """Извлекает текст из ответа OpenAI Responses API."""
+        output_text = getattr(response, 'output_text', '')
+        if output_text:
+            return output_text.strip()
+
+        text_parts = []
+        for item in getattr(response, 'output', []) or []:
+            if getattr(item, 'type', '') != 'message':
+                continue
+            for content in getattr(item, 'content', []) or []:
+                content_type = getattr(content, 'type', '')
+                if content_type in ['output_text', 'text']:
+                    text = getattr(content, 'text', '')
+                    if text:
+                        text_parts.append(text.strip())
+
+        return "\n".join(part for part in text_parts if part)
     
     def _build_analysis_context(self, documents: List[Dict[str, Any]], project_types: List[str]) -> str:
         """Строит контекст для анализа из документов с детальной структурой источников"""

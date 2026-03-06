@@ -1,0 +1,15 @@
+services:
+  ai-docs-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-docs-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"from config import Config; import sys; sys.exit(0 if Config().validate() else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

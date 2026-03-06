@@ -172,7 +172,7 @@ sudo yum install dejavu-sans-fonts
 - **Python**: 3.8+
 - **RAM**: минимум 512MB (рекомендуется 1GB+)
 - **Диск**: 100MB для кода + место для временных файлов
-- **Сеть**: доступ к Mattermost, OpenAI API, Confluence
+- **Сеть**: доступ к Mattermost, LiteLLM (`https://litellm.1bitai.ru`), Confluence
 - **ОС**: Linux, macOS, Windows
 - **Рекомендуется**: использовать Pyright для проверки типизации кода
 
