@@ -1,10 +1,10 @@
-# BIT.Digital Mattermost Document Analyzer Bot 🤖📄
+# Mattermost Document Analyzer Bot 🤖📄
 
 [![GitHub](https://img.shields.io/badge/GitHub-chastnik%2Fmm__bot-blue?style=flat&logo=github)](https://github.com/chastnik/mm_bot)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat&logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat)](LICENSE)
 
-Для БИТ.Цифры: Интеллектуальный бот для анализа документации ИТ проектов с использованием GPT и автоматической генерацией PDF отчетов в Mattermost.
+Интеллектуальный бот для анализа документации ИТ проектов с использованием GPT и автоматической генерацией PDF отчетов в Mattermost.
 
 ## 🚀 Возможности
 
@@ -42,6 +42,9 @@ pip install -r requirements.txt
 cp env.example .env
 ```
 
+Опционально можно переопределить путь к БД настроек проверки:
+- `SETTINGS_DB_PATH=data/bot_settings.db`
+
 ### 5. Создание бота в Mattermost
 
 1. **Создайте бота в Mattermost:**
@@ -72,6 +75,10 @@ python3 test_components.py
 python3 main.py
 ```
 
+При запуске бот автоматически:
+- применяет миграции БД настроек;
+- выполняет первичное заполнение (если БД пустая).
+
 ### Запуск с логированием
 ```bash
 ./start_bot.sh
@@ -80,6 +87,11 @@ python3 main.py
 ### Фоновый запуск (Linux/Mac)
 ```bash
 nohup python3 main.py > bot.log 2>&1 &
+```
+
+### Ручной запуск миграций/инициализации настроек
+```bash
+python3 init_settings_db.py
 ```
 
 ### Запуск в Docker (планируется)
@@ -111,6 +123,8 @@ mm_bot/
 ├── mattermost_bot.py      # Основной класс бота
 ├── document_processor.py  # Обработка документов
 ├── llm_analyzer.py        # Анализ с помощью LLM
+├── settings_db.py         # Хранение настроек проверки в SQLite + миграции
+├── init_settings_db.py    # Инициализация БД и первичный seed
 ├── gpt_analyzer.py        # GPT-специфичный анализатор
 ├── pdf_generator.py       # Генерация PDF отчетов
 ├── utils.py               # Вспомогательные функции

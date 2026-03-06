@@ -32,6 +32,9 @@ Thumbs.db
 *.temp
 .cache/
 
+# Локальная БД настроек
+data/
+
 # Документы и тестовые файлы
 test_output/
 temp_docs/

@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    volumes:
+      - ./data:/app/data
     healthcheck:
       test: ["CMD-SHELL", "python -c \"from config import Config; import sys; sys.exit(0 if Config().validate() else 1)\""]
       interval: 30s

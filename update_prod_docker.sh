@@ -118,6 +118,9 @@ ${COMPOSE_CMD} down
 log "Пересобираю образ и поднимаю сервис..."
 ${COMPOSE_CMD} up -d --build --remove-orphans
 
+log "Применяю миграции БД настроек..."
+${COMPOSE_CMD} exec -T ai-docs-bot python init_settings_db.py
+
 log "Проверяю, что контейнер запущен..."
 if docker ps --format '{{.Names}}' | rg -q '^ai-docs-bot$'; then
   ok "Обновление завершено. Контейнер ai-docs-bot запущен."

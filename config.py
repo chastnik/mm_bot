@@ -35,6 +35,11 @@ class ConfluenceConfig:
     username: str
     password: str
     base_url: str
+
+@dataclass
+class DatabaseConfig:
+    """Настройки БД с параметрами проверки документов"""
+    path: str
     
 class Config:
     """Основной класс конфигурации"""
@@ -59,6 +64,10 @@ class Config:
             username=os.getenv('CONFLUENCE_USERNAME', ''),
             password=os.getenv('CONFLUENCE_PASSWORD', ''),
             base_url=os.getenv('CONFLUENCE_BASE_URL', '')
+        )
+
+        self.database = DatabaseConfig(
+            path=os.getenv('SETTINGS_DB_PATH', 'data/bot_settings.db')
         )
     
     def validate(self) -> bool:

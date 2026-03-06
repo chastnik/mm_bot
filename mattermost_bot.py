@@ -9,10 +9,11 @@ import urllib3
 import warnings
 from typing import Dict, List, Any, Optional
 from mattermostdriver import Driver
-from config import Config, PROJECT_TYPES
+from config import Config, PROJECT_TYPES, ARTIFACTS_STRUCTURE
 from document_processor import DocumentProcessor
 from llm_analyzer import LLMAnalyzer
 from pdf_generator import PDFGenerator
+from settings_db import SettingsDatabase
 import time
 import tempfile
 from utils import log_with_timestamp
@@ -25,6 +26,10 @@ class MattermostBot:
     
     def __init__(self, config: Config):
         self.config = config
+        self.settings_db = SettingsDatabase(config.database.path)
+        self.settings_db.initialize()
+        self.project_types = self.settings_db.load_project_types() or PROJECT_TYPES
+        self.artifacts_structure = self.settings_db.load_artifacts_structure() or ARTIFACTS_STRUCTURE
         
         # Инициализация драйвера Mattermost
         # Извлекаем хост из URL без протокола
@@ -56,7 +61,7 @@ class MattermostBot:
         
         # Инициализация компонентов
         self.document_processor = DocumentProcessor(config.confluence)
-        self.llm_analyzer = LLMAnalyzer(config.llm)
+        self.llm_analyzer = LLMAnalyzer(config.llm, self.artifacts_structure)
         self.pdf_generator = PDFGenerator()
         
         # Состояния пользователей
@@ -340,7 +345,7 @@ class MattermostBot:
         is_exact_command = any(cmd in message_lower for cmd in exact_commands)
         
         # Команды с эмодзи кодов проектов
-        is_project_command = '📋' in message and any(code in message.upper() for code in PROJECT_TYPES.keys())
+        is_project_command = '📋' in message and any(code in message.upper() for code in self.project_types.keys())
         
         return has_emoji and (is_exact_command or is_project_command)
     
@@ -365,7 +370,7 @@ class MattermostBot:
                 # Извлекаем коды типов проектов
                 selected_types = []
                 message_upper = message.upper()
-                for code in PROJECT_TYPES.keys():
+                for code in self.project_types.keys():
                     if code in message_upper:
                         selected_types.append(code)
                 
@@ -523,7 +528,7 @@ class MattermostBot:
         
         # Создаём красивую карточку с типами проектов
         project_types_text = ""
-        for code, name in PROJECT_TYPES.items():
+        for code, name in self.project_types.items():
             project_types_text += f"• **`{code}`** - {name}\n"
         
         attachments = [{
@@ -558,7 +563,7 @@ class MattermostBot:
         session['project_types'] = selected_types
         session['state'] = 'waiting_documents'
         
-        types_text = ", ".join([PROJECT_TYPES[t] for t in selected_types])
+        types_text = ", ".join([self.project_types.get(t, t) for t in selected_types])
         
         message = f"""
 ✅ **Выбранные типы проектов:** {types_text}
@@ -589,12 +594,12 @@ class MattermostBot:
         
         for code in possible_codes:
             code = code.strip()
-            if code in PROJECT_TYPES:
+            if code in self.project_types:
                 selected_types.append(code)
         
         # Также проверяем полные названия
         if not selected_types:
-            for code, name in PROJECT_TYPES.items():
+            for code, name in self.project_types.items():
                 if code.lower() in message.lower() or name.lower() in message.lower():
                     selected_types.append(code)
         
@@ -602,7 +607,7 @@ class MattermostBot:
             await self._send_message(channel_id, 
                 "❌ Не найдено подходящих типов проектов.\n\n" +
                 "**Доступные коды:**\n" + 
-                "\n".join([f"• `{code}` - {name}" for code, name in PROJECT_TYPES.items()]) +
+                "\n".join([f"• `{code}` - {name}" for code, name in self.project_types.items()]) +
                 "\n\n**Пример:** `BI` или `BI,DWH`")
             return
         

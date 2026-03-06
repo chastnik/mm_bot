@@ -8,8 +8,9 @@ from config import ARTIFACTS_STRUCTURE
 class LLMAnalyzer:
     """Класс для анализа документов с помощью корпоративной LLM"""
     
-    def __init__(self, llm_config):
+    def __init__(self, llm_config, artifacts_structure: Optional[Dict[str, Dict[str, List[str]]]] = None):
         self.config = llm_config
+        self.artifacts_structure = artifacts_structure or ARTIFACTS_STRUCTURE
         self.base_url = llm_config.base_url.rstrip('/')
         self.client = OpenAI(
             api_key=llm_config.proxy_token,
@@ -269,22 +270,23 @@ class LLMAnalyzer:
     def _get_all_required_artifacts(self, project_types: List[str]) -> List[str]:
         """Получает полный список всех необходимых артефактов"""
         artifacts_to_find = []
+        structure = self.artifacts_structure
         
         # Всегда добавляем все базовые категории
-        artifacts_to_find.extend(ARTIFACTS_STRUCTURE['general']['items'])
-        artifacts_to_find.extend(ARTIFACTS_STRUCTURE['technical']['items'])
-        artifacts_to_find.extend(ARTIFACTS_STRUCTURE['operations']['items'])
-        artifacts_to_find.extend(ARTIFACTS_STRUCTURE['testing']['items'])
-        artifacts_to_find.extend(ARTIFACTS_STRUCTURE['changes']['items'])
+        artifacts_to_find.extend(structure.get('general', {}).get('items', []))
+        artifacts_to_find.extend(structure.get('technical', {}).get('items', []))
+        artifacts_to_find.extend(structure.get('operations', {}).get('items', []))
+        artifacts_to_find.extend(structure.get('testing', {}).get('items', []))
+        artifacts_to_find.extend(structure.get('changes', {}).get('items', []))
         
         # Добавляем специфичные для типов проектов
         for project_type in project_types:
             if project_type.lower() == 'bi':
-                artifacts_to_find.extend(ARTIFACTS_STRUCTURE['bi']['items'])
+                artifacts_to_find.extend(structure.get('bi', {}).get('items', []))
             elif project_type.lower() == 'dwh':
-                artifacts_to_find.extend(ARTIFACTS_STRUCTURE['dwh']['items'])
+                artifacts_to_find.extend(structure.get('dwh', {}).get('items', []))
             elif project_type.lower() == 'rpa':
-                artifacts_to_find.extend(ARTIFACTS_STRUCTURE['rpa']['items'])
+                artifacts_to_find.extend(structure.get('rpa', {}).get('items', []))
         
         return artifacts_to_find
 

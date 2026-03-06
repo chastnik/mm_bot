@@ -140,6 +140,9 @@ ${COMPOSE_CMD} build --pull
 log "Запускаю контейнер в фоне..."
 ${COMPOSE_CMD} up -d
 
+log "Инициализирую БД настроек (миграции и первичное заполнение)..."
+${COMPOSE_CMD} exec -T ai-docs-bot python init_settings_db.py
+
 log "Проверяю статус контейнера..."
 if docker ps --format '{{.Names}}' | rg -q '^ai-docs-bot$'; then
   ok "Контейнер ai-docs-bot запущен."

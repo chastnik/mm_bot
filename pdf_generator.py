@@ -179,10 +179,6 @@ class PDFGenerator:
         # Создаем содержимое отчета
         story = []
         
-        # Название департамента
-        story.append(Paragraph("БИТ.Цифра", self.styles['CustomHeading2']))
-        story.append(Spacer(1, 8))
-        
         # Заголовок
         story.append(Paragraph("Отчет по анализу документации ИТ проекта", self.styles['CustomTitle']))
         story.append(Spacer(1, 12))
