@@ -67,6 +67,77 @@ class SettingsDatabase:
                 }
         return structure
 
+    def get_user_confluence_credentials(self, user_id: str) -> Optional[Dict[str, str]]:
+        """Возвращает сохраненные credentials Confluence для пользователя."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT confluence_username, confluence_password
+                FROM user_confluence_credentials
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "username": row["confluence_username"],
+            "password": row["confluence_password"],
+        }
+
+    def set_user_confluence_credentials(
+        self,
+        user_id: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> None:
+        """Создает или обновляет credentials Confluence пользователя."""
+        if username is None and password is None:
+            raise ValueError("Нужно передать username и/или password")
+
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT confluence_username, confluence_password
+                FROM user_confluence_credentials
+                WHERE user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+
+            if existing is None:
+                if username is None or password is None:
+                    raise ValueError(
+                        "Для первичной настройки нужно передать и username, и password"
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO user_confluence_credentials(
+                        user_id,
+                        confluence_username,
+                        confluence_password
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (user_id, username, password),
+                )
+                return
+
+            resolved_username = username if username is not None else existing["confluence_username"]
+            resolved_password = password if password is not None else existing["confluence_password"]
+
+            conn.execute(
+                """
+                UPDATE user_confluence_credentials
+                SET confluence_username = ?,
+                    confluence_password = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                """,
+                (resolved_username, resolved_password, user_id),
+            )
+
     def get_seed_metadata(self) -> Optional[Dict[str, Any]]:
         """Возвращает текущую метаинформацию о примененном seed."""
         with self._connect() as conn:
@@ -94,6 +165,7 @@ class SettingsDatabase:
         migrations: List[Tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
             (1, "create_settings_tables", self._migration_001_create_settings_tables),
             (2, "create_seed_metadata_table", self._migration_002_create_seed_metadata_table),
+            (3, "create_user_confluence_credentials", self._migration_003_create_user_confluence_credentials),
         ]
         applied_rows = conn.execute("SELECT version FROM schema_migrations").fetchall()
         applied_versions = {row["version"] for row in applied_rows}
@@ -148,6 +220,19 @@ class SettingsDatabase:
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 seed_version INTEGER NOT NULL,
                 seed_hash TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+    def _migration_003_create_user_confluence_credentials(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_confluence_credentials (
+                user_id TEXT PRIMARY KEY,
+                confluence_username TEXT NOT NULL,
+                confluence_password TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """

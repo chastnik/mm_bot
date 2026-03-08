@@ -53,8 +53,6 @@ MATTERMOST_TEAM=your_team_name
 MATTERMOST_SSL_VERIFY=true
 
 # Confluence
-CONFLUENCE_USERNAME=your_confluence_username
-CONFLUENCE_PASSWORD=your_confluence_password
 CONFLUENCE_BASE_URL=https://confluence.yourcompany.ru/
 
 # LLM

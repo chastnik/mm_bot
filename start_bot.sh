@@ -94,8 +94,6 @@ check_env_vars() {
         "LLM_PROXY_TOKEN"
         "LLM_BASE_URL"
         "LLM_MODEL"
-        "CONFLUENCE_USERNAME"
-        "CONFLUENCE_PASSWORD"
         "CONFLUENCE_BASE_URL"
     )
     

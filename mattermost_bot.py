@@ -10,7 +10,11 @@ import warnings
 from typing import Dict, List, Any, Optional
 from mattermostdriver import Driver
 from config import Config
-from document_processor import DocumentProcessor
+from document_processor import (
+    ConfluenceAuthenticationError,
+    ConfluenceCredentialsMissingError,
+    DocumentProcessor,
+)
 from llm_analyzer import LLMAnalyzer
 from pdf_generator import PDFGenerator
 from settings_db import SettingsDatabase
@@ -429,7 +433,8 @@ class MattermostBot:
                 'state': 'initial',
                 'project_types': [],
                 'documents': [],
-                'waiting_for_documents': False
+                'waiting_for_documents': False,
+                'pending_confluence_username': None,
             }
         return self.user_sessions[user_id]
     
@@ -437,6 +442,14 @@ class MattermostBot:
                                  post: Dict, session: Dict):
         """Обрабатывает действие пользователя в зависимости от состояния"""
         message_lower = message.lower().strip()
+
+        # Глобальные команды управления credentials Confluence
+        if await self._handle_confluence_credentials_commands(user_id, channel_id, message, session):
+            return
+
+        # Обработка состояний ввода credentials Confluence
+        if await self._handle_confluence_credentials_states(user_id, channel_id, message, session):
+            return
         
         # Проверяем команды сброса состояния (глобальные команды)
         reset_commands = ['начать анализ', 'start', 'привет', 'hello', 'помощь', 'help', '🚀 начать анализ', '🚀 новый анализ']
@@ -475,6 +488,123 @@ class MattermostBot:
             # Неизвестное состояние - сбрасываем
             self._reset_session(session)
             await self._handle_initial_state(user_id, channel_id, message, session)
+
+    async def _handle_confluence_credentials_commands(
+        self,
+        user_id: str,
+        channel_id: str,
+        message: str,
+        session: Dict[str, Any],
+    ) -> bool:
+        message_lower = message.lower().strip()
+        has_setup_command = "настроить confluence" in message_lower or "confluence логин" in message_lower
+        has_change_login_command = (
+            "сменить логин confluence" in message_lower
+            or "изменить логин confluence" in message_lower
+        )
+        has_change_password_command = (
+            "сменить пароль confluence" in message_lower
+            or "изменить пароль confluence" in message_lower
+        )
+
+        if has_setup_command:
+            session["state"] = "waiting_confluence_username_setup"
+            await self._send_message(
+                channel_id,
+                "🔐 Введите логин Confluence (обычно корпоративный username или email).",
+            )
+            return True
+
+        if has_change_login_command:
+            existing = self.settings_db.get_user_confluence_credentials(user_id)
+            if not existing:
+                await self._send_message(
+                    channel_id,
+                    "⚠️ Учетные данные Confluence еще не настроены.\n"
+                    "Сначала выполните `настроить confluence`.",
+                )
+                return True
+            session["state"] = "waiting_confluence_username_change"
+            await self._send_message(channel_id, "👤 Введите новый логин Confluence.")
+            return True
+
+        if has_change_password_command:
+            existing = self.settings_db.get_user_confluence_credentials(user_id)
+            if not existing:
+                await self._send_message(
+                    channel_id,
+                    "⚠️ Учетные данные Confluence еще не настроены.\n"
+                    "Сначала выполните `настроить confluence`.",
+                )
+                return True
+            session["state"] = "waiting_confluence_password_change"
+            await self._send_message(channel_id, "🔑 Введите новый пароль (или API token) Confluence.")
+            return True
+
+        return False
+
+    async def _handle_confluence_credentials_states(
+        self,
+        user_id: str,
+        channel_id: str,
+        message: str,
+        session: Dict[str, Any],
+    ) -> bool:
+        state = session.get("state")
+        value = message.strip()
+
+        if state == "waiting_confluence_username_setup":
+            if not value:
+                await self._send_message(channel_id, "❌ Логин не должен быть пустым. Введите логин Confluence.")
+                return True
+            session["pending_confluence_username"] = value
+            session["state"] = "waiting_confluence_password_setup"
+            await self._send_message(channel_id, "🔑 Введите пароль (или API token) Confluence.")
+            return True
+
+        if state == "waiting_confluence_password_setup":
+            username = session.get("pending_confluence_username")
+            if not username:
+                session["state"] = "waiting_confluence_username_setup"
+                await self._send_message(channel_id, "⚠️ Не найден введенный логин. Введите логин Confluence заново.")
+                return True
+            if not value:
+                await self._send_message(channel_id, "❌ Пароль не должен быть пустым. Введите пароль Confluence.")
+                return True
+
+            self.settings_db.set_user_confluence_credentials(
+                user_id=user_id,
+                username=username.strip(),
+                password=value,
+            )
+            session["pending_confluence_username"] = None
+            session["state"] = "initial"
+            await self._send_message(
+                channel_id,
+                "✅ Учетные данные Confluence сохранены. "
+                "При следующих анализах пароль повторно запрашиваться не будет.",
+            )
+            return True
+
+        if state == "waiting_confluence_username_change":
+            if not value:
+                await self._send_message(channel_id, "❌ Логин не должен быть пустым. Введите новый логин.")
+                return True
+            self.settings_db.set_user_confluence_credentials(user_id=user_id, username=value.strip())
+            session["state"] = "initial"
+            await self._send_message(channel_id, "✅ Логин Confluence обновлен.")
+            return True
+
+        if state == "waiting_confluence_password_change":
+            if not value:
+                await self._send_message(channel_id, "❌ Пароль не должен быть пустым. Введите новый пароль.")
+                return True
+            self.settings_db.set_user_confluence_credentials(user_id=user_id, password=value)
+            session["state"] = "initial"
+            await self._send_message(channel_id, "✅ Пароль Confluence обновлен.")
+            return True
+
+        return False
     
     async def _handle_initial_state(self, user_id: str, channel_id: str, message: str, session: Dict):
         """Обрабатывает начальное состояние"""
@@ -506,7 +636,7 @@ class MattermostBot:
             "fields": [
                 {
                     "title": "Доступные команды:",
-                    "value": "• **`начать анализ`** - запустить новый анализ\n• **`помощь`** - показать справку\n• **`привет`** - вернуться в главное меню",
+                    "value": "• **`начать анализ`** - запустить новый анализ\n• **`настроить confluence`** - сохранить логин/пароль\n• **`изменить логин confluence`** - сменить логин\n• **`изменить пароль confluence`** - сменить пароль\n• **`помощь`** - показать справку\n• **`привет`** - вернуться в главное меню",
                     "short": False
                 }
             ]
@@ -780,9 +910,26 @@ class MattermostBot:
         try:
             await self._send_message(channel_id, 
                 "🔄 Начинаю анализ документов. Это может занять несколько минут...")
+
+            has_confluence_documents = any(
+                document.get("type") == "confluence" for document in session.get("documents", [])
+            )
+            confluence_credentials = self.settings_db.get_user_confluence_credentials(user_id)
+            if has_confluence_documents and not confluence_credentials:
+                session["state"] = "asking_more_documents"
+                await self._send_message(
+                    channel_id,
+                    "⚠️ Для чтения Confluence нужно один раз настроить личные credentials.\n"
+                    "Введите команду `настроить confluence`, укажите логин и пароль, "
+                    "затем снова отправьте `анализ`.",
+                )
+                return
             
             # Обрабатываем документы
-            processed_docs = self.document_processor.process_documents(session['documents'])
+            processed_docs = self.document_processor.process_documents(
+                session['documents'],
+                confluence_credentials=confluence_credentials,
+            )
             
             if not processed_docs:
                 await self._send_message(channel_id, 
@@ -822,6 +969,25 @@ class MattermostBot:
             self._reset_session(session)
             
         except Exception as e:
+            if isinstance(e, ConfluenceCredentialsMissingError):
+                session["state"] = "asking_more_documents"
+                await self._send_message(
+                    channel_id,
+                    "⚠️ Не найдены личные credentials Confluence.\n"
+                    "Выполните `настроить confluence`, затем повторите `анализ`.",
+                )
+                return
+
+            if isinstance(e, ConfluenceAuthenticationError):
+                session["state"] = "asking_more_documents"
+                await self._send_message(
+                    channel_id,
+                    "❌ Не удалось войти в Confluence с сохраненным паролем (выполнена 1 попытка).\n"
+                    "Скорее всего пароль/токен изменился. Обновите его командой "
+                    "`изменить пароль confluence`, затем повторите `анализ`.",
+                )
+                return
+
             print(f"Ошибка при анализе: {str(e)}")
             await self._send_error_message(channel_id, 
                 "Произошла ошибка при анализе документов. Попробуйте еще раз.")
@@ -934,7 +1100,8 @@ class MattermostBot:
             'state': 'initial',
             'project_types': [],
             'documents': [],
-            'waiting_for_documents': False
+            'waiting_for_documents': False,
+            'pending_confluence_username': None,
         })
     
     async def _send_message(self, channel_id: str, message: str, attachments: Optional[List[Dict[str, Any]]] = None, file_ids: Optional[List[str]] = None):

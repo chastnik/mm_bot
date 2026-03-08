@@ -41,8 +41,6 @@ jobs:
           MATTERMOST_PASSWORD=test-password
           MATTERMOST_TEAM=test-team
           MATTERMOST_SSL_VERIFY=true
-          CONFLUENCE_USERNAME=test-user
-          CONFLUENCE_PASSWORD=test-password
           CONFLUENCE_BASE_URL=https://confluence.example.com
           LLM_PROXY_TOKEN=test-token
           LLM_BASE_URL=https://llm.example.com

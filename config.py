@@ -32,8 +32,6 @@ class LLMConfig:
 @dataclass
 class ConfluenceConfig:
     """Настройки подключения к Confluence"""
-    username: str
-    password: str
     base_url: str
 
 @dataclass
@@ -61,8 +59,6 @@ class Config:
         )
         
         self.confluence = ConfluenceConfig(
-            username=os.getenv('CONFLUENCE_USERNAME', ''),
-            password=os.getenv('CONFLUENCE_PASSWORD', ''),
             base_url=os.getenv('CONFLUENCE_BASE_URL', '')
         )
 
@@ -88,10 +84,6 @@ class Config:
             print("Ошибка: не настроен LLM_MODEL")
             return False
             
-        if not self.confluence.username or not self.confluence.password:
-            print("Ошибка: не настроены параметры Confluence")
-            return False
-
         if not self.confluence.base_url:
             print("Ошибка: не настроен CONFLUENCE_BASE_URL")
             return False

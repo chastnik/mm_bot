@@ -32,8 +32,6 @@ async def main():
         print("- LLM_PROXY_TOKEN: Токен для корпоративной LLM")
         print("- LLM_BASE_URL: Базовый URL корпоративной LLM")
         print("- LLM_MODEL: Модель корпоративной LLM")
-        print("- CONFLUENCE_USERNAME: Имя пользователя Confluence")
-        print("- CONFLUENCE_PASSWORD: Пароль Confluence")
         print("- CONFLUENCE_BASE_URL: Базовый URL Confluence")
         return 1
     

@@ -13,14 +13,26 @@ from bs4 import BeautifulSoup
 import base64
 import json
 
+class ConfluenceCredentialsMissingError(Exception):
+    """Не заданы credentials Confluence для пользователя."""
+
+
+class ConfluenceAuthenticationError(Exception):
+    """Ошибка аутентификации Confluence (например, неверный пароль)."""
+
+
 class DocumentProcessor:
     """Класс для обработки различных типов документов"""
     
     def __init__(self, confluence_config):
-        self.confluence_config = confluence_config
+        self.confluence_base_url = confluence_config.base_url
         self.supported_formats = ['.pdf', '.docx', '.doc', '.xlsx', '.rtf']
     
-    def process_documents(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def process_documents(
+        self,
+        documents: List[Dict[str, Any]],
+        confluence_credentials: Optional[Dict[str, str]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Обрабатывает список документов и возвращает извлеченный текст
         
@@ -31,13 +43,23 @@ class DocumentProcessor:
             Список обработанных документов с извлеченным текстом
         """
         processed_docs = []
+        has_confluence_docs = any(doc.get('type') == 'confluence' for doc in documents)
+        credentials = confluence_credentials or {}
+
+        if has_confluence_docs:
+            username = credentials.get("username", "").strip()
+            password = credentials.get("password", "")
+            if not username or not password:
+                raise ConfluenceCredentialsMissingError("Не настроены логин/пароль Confluence")
+
+            self._validate_confluence_credentials(username, password)
         
         for doc in documents:
             try:
                 if doc['type'] == 'file':
                     processed_doc = self._process_file(doc)
                 elif doc['type'] == 'confluence':
-                    processed_doc = self._process_confluence_url(doc)
+                    processed_doc = self._process_confluence_url(doc, credentials)
                 else:
                     continue
                     
@@ -48,6 +70,26 @@ class DocumentProcessor:
                 print(f"Ошибка при обработке документа {doc.get('name', 'unknown')}: {str(e)}")
                 
         return processed_docs
+
+    def _get_auth(self, credentials: Dict[str, str]) -> tuple[str, str]:
+        username = credentials.get("username", "").strip()
+        password = credentials.get("password", "")
+        if not username or not password:
+            raise ConfluenceCredentialsMissingError("Не настроены логин/пароль Confluence")
+        return username, password
+
+    def _raise_if_auth_error(self, response: requests.Response, context: str) -> None:
+        if response.status_code == 401:
+            raise ConfluenceAuthenticationError(
+                f"Ошибка аутентификации Confluence (401) во время: {context}"
+            )
+
+    def _validate_confluence_credentials(self, username: str, password: str) -> None:
+        """Делает одну проверочную попытку авторизации в Confluence."""
+        test_url = f"{self.confluence_base_url}rest/api/space?limit=1"
+        response = requests.get(test_url, auth=(username, password))
+        self._raise_if_auth_error(response, "проверка credentials")
+        response.raise_for_status()
     
     def _process_file(self, doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Обрабатывает файл в зависимости от его типа"""
@@ -242,7 +284,11 @@ class DocumentProcessor:
             print(f"Ошибка при извлечении текста из RTF: {str(e)}")
             return ""
     
-    def _process_confluence_url(self, doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _process_confluence_url(
+        self,
+        doc: Dict[str, Any],
+        credentials: Dict[str, str],
+    ) -> Optional[Dict[str, Any]]:
         """Обрабатывает ссылку на Confluence страницу с рекурсивным обходом дочерних страниц и файлов"""
         url = doc.get('url', '')
         
@@ -253,7 +299,7 @@ class DocumentProcessor:
             print(f"🔍 Анализирую Confluence страницу: {url}")
             
             # Получаем полный ID страницы из короткого URL
-            page_id = self._resolve_page_id(url)
+            page_id = self._resolve_page_id(url, credentials)
             if not page_id:
                 print(f"❌ Не удалось получить ID страницы для URL: {url}")
                 return None
@@ -261,25 +307,25 @@ class DocumentProcessor:
             print(f"✅ Получен ID страницы: {page_id}")
             
             # Извлекаем содержимое главной страницы
-            main_page_content, main_page_title = self._fetch_confluence_page_by_id(page_id)
+            main_page_content, main_page_title = self._fetch_confluence_page_by_id(page_id, credentials)
             
             # Получаем все дочерние страницы рекурсивно
-            all_pages = self._get_all_child_pages_recursive(page_id)
+            all_pages = self._get_all_child_pages_recursive(page_id, credentials)
             
             # Получаем вложенные файлы
-            attachments = self._get_page_attachments(page_id)
+            attachments = self._get_page_attachments(page_id, credentials)
             
             all_content = f"--- ГЛАВНАЯ СТРАНИЦА: {main_page_title} ---\n{main_page_content}\n"
             
             # Добавляем содержимое всех дочерних страниц И их вложений
             all_child_attachments = []
             for page_info in all_pages:
-                child_content, child_title = self._fetch_confluence_page_by_id(page_info['id'])
+                child_content, child_title = self._fetch_confluence_page_by_id(page_info['id'], credentials)
                 level_indent = "  " * page_info['level']  # Отступ для показа уровня вложенности
                 all_content += f"\n--- {level_indent}ДОЧЕРНЯЯ СТРАНИЦА (уровень {page_info['level']}): {child_title} ---\n{child_content}\n"
                 
                 # ВАЖНО: Получаем вложения с каждой дочерней страницы
-                child_attachments = self._get_page_attachments(page_info['id'])
+                child_attachments = self._get_page_attachments(page_info['id'], credentials)
                 for child_attachment in child_attachments:
                     child_attachment['source_page'] = child_title  # Помечаем источник
                     all_child_attachments.append(child_attachment)
@@ -287,13 +333,13 @@ class DocumentProcessor:
             
             # Добавляем содержимое вложенных файлов с главной страницы
             for attachment in attachments:
-                file_content = self._extract_attachment_content(attachment)
+                file_content = self._extract_attachment_content(attachment, credentials)
                 if file_content:
                     all_content += f"\n--- ВЛОЖЕННЫЙ ФАЙЛ (главная страница): {attachment['title']} ---\n{file_content}\n"
             
             # Добавляем содержимое вложенных файлов с дочерних страниц
             for attachment in all_child_attachments:
-                file_content = self._extract_attachment_content(attachment)
+                file_content = self._extract_attachment_content(attachment, credentials)
                 if file_content:
                     source_page = attachment.get('source_page', 'неизвестная страница')
                     all_content += f"\n--- ВЛОЖЕННЫЙ ФАЙЛ (со страницы '{source_page}'): {attachment['title']} ---\n{file_content}\n"
@@ -318,18 +364,15 @@ class DocumentProcessor:
             }
             
         except Exception as e:
+            if isinstance(e, ConfluenceAuthenticationError):
+                raise
             print(f"❌ Ошибка при обработке Confluence страницы {url}: {str(e)}")
             return None
     
-    def _resolve_page_id(self, url: str) -> Optional[str]:
+    def _resolve_page_id(self, url: str, credentials: Dict[str, str]) -> Optional[str]:
         """Разрешает короткий URL Confluence в полный ID страницы"""
         try:
-            # Проверяем, настроены ли учетные данные Confluence
-            if not self.confluence_config.username or not self.confluence_config.password:
-                print("⚠️ Учетные данные Confluence не настроены. Используем fallback метод.")
-                return self._fallback_resolve_page_id(url)
-            
-            auth = (self.confluence_config.username, self.confluence_config.password)
+            auth = self._get_auth(credentials)
             
             # Для URL вида https://confluence.1solution.ru/x/E_7iGQ
             if '/x/' in url:
@@ -338,12 +381,15 @@ class DocumentProcessor:
                 
                 # Метод 1: Попробуем напрямую как ID страницы
                 try:
-                    direct_url = f"{self.confluence_config.base_url}rest/api/content/{tiny_id}?expand=body.storage"
+                    direct_url = f"{self.confluence_base_url}rest/api/content/{tiny_id}?expand=body.storage"
                     direct_response = requests.get(direct_url, auth=auth)
+                    self._raise_if_auth_error(direct_response, "получение страницы по короткому id")
                     if direct_response.status_code == 200:
                         print(f"✅ Короткий ID {tiny_id} работает как прямой ID страницы")
                         return tiny_id
                 except Exception as e:
+                    if isinstance(e, ConfluenceAuthenticationError):
+                        raise
                     print(f"🔍 Прямой запрос не удался: {str(e)}")
                 
                 # Метод 2: Поиск с пагинацией
@@ -354,7 +400,7 @@ class DocumentProcessor:
                     max_pages = 5  # Максимум 500 страниц
                     
                     for page in range(max_pages):
-                        search_url = f"{self.confluence_config.base_url}rest/api/content"
+                        search_url = f"{self.confluence_base_url}rest/api/content"
                         params = {
                             'type': 'page',
                             'limit': limit,
@@ -363,6 +409,7 @@ class DocumentProcessor:
                         }
                         
                         response = requests.get(search_url, auth=auth, params=params)
+                        self._raise_if_auth_error(response, "поиск страницы по короткому URL")
                         if response.status_code != 200:
                             break
                             
@@ -391,12 +438,14 @@ class DocumentProcessor:
                         return found_page_id
                         
                 except Exception as e:
+                    if isinstance(e, ConfluenceAuthenticationError):
+                        raise
                     print(f"🔍 Поиск с пагинацией не удался: {str(e)}")
                 
                 # Метод 3: CQL поиск по названию страницы (если знаем)
                 try:
                     # Попробуем найти через CQL поиск
-                    search_url = f"{self.confluence_config.base_url}rest/api/content/search"
+                    search_url = f"{self.confluence_base_url}rest/api/content/search"
                     params = {
                         'cql': f'type=page',
                         'limit': 200,
@@ -404,6 +453,7 @@ class DocumentProcessor:
                     }
                     
                     response = requests.get(search_url, auth=auth, params=params)
+                    self._raise_if_auth_error(response, "CQL поиск страницы")
                     if response.status_code == 200:
                         data = response.json()
                         results = data.get('results', [])
@@ -416,11 +466,13 @@ class DocumentProcessor:
                                 print(f"✅ Найдена через CQL: {result['title']} (ID: {result['id']})")
                                 return result['id']
                 except Exception as e:
+                    if isinstance(e, ConfluenceAuthenticationError):
+                        raise
                     print(f"🔍 CQL поиск не удался: {str(e)}")
                 
                 # Метод 4: Попробуем получить список всех страниц и найти совпадение
                 try:
-                    all_pages_url = f"{self.confluence_config.base_url}rest/api/content"
+                    all_pages_url = f"{self.confluence_base_url}rest/api/content"
                     params = {
                         'type': 'page',
                         'limit': 50,
@@ -428,6 +480,7 @@ class DocumentProcessor:
                     }
                     
                     response = requests.get(all_pages_url, auth=auth, params=params)
+                    self._raise_if_auth_error(response, "получение списка страниц")
                     if response.status_code == 200:
                         data = response.json()
                         
@@ -437,6 +490,8 @@ class DocumentProcessor:
                                 print(f"✅ Найдена страница в списке: {page['title']} (ID: {page['id']})")
                                 return page['id']
                 except Exception as e:
+                    if isinstance(e, ConfluenceAuthenticationError):
+                        raise
                     print(f"🔍 Поиск в списке страниц не удался: {str(e)}")
                 
                 # Метод 5: Известные соответствия коротких URL
@@ -459,6 +514,8 @@ class DocumentProcessor:
             return self._fallback_resolve_page_id(url)
             
         except Exception as e:
+            if isinstance(e, ConfluenceAuthenticationError):
+                raise
             print(f"❌ Ошибка при разрешении ID страницы для {url}: {str(e)}")
             return self._fallback_resolve_page_id(url)
     
@@ -483,49 +540,20 @@ class DocumentProcessor:
             print(f"❌ Fallback метод также не удался: {str(e)}")
             return None
 
-    def _fetch_confluence_page_by_id(self, page_id: str) -> tuple[str, str]:
+    def _fetch_confluence_page_by_id(
+        self,
+        page_id: str,
+        credentials: Dict[str, str],
+    ) -> tuple[str, str]:
         """Получает содержимое и заголовок страницы Confluence по ID"""
         try:
-            # Проверяем настройки аутентификации
-            if not self.confluence_config.username or not self.confluence_config.password:
-                error_msg = f"""
-❌ CONFLUENCE НЕ НАСТРОЕН
-
-Для анализа Confluence страниц необходимо настроить аутентификацию:
-
-1. Добавьте в .env файл:
-   CONFLUENCE_USERNAME=your-email@company.com
-   CONFLUENCE_PASSWORD=your-api-token
-
-2. Создайте API токен:
-   - Войдите в https://id.atlassian.com/
-   - Перейдите в Security → API tokens
-   - Создайте новый токен
-   - Используйте токен как CONFLUENCE_PASSWORD
-
-💡 ВАЖНО: Используйте полный URL из адресной строки браузера:
-   ✅ https://confluence.1solution.ru/spaces/PROJECT/pages/123456/PageName
-   ✅ https://confluence.1solution.ru/x/ABC123
-
-URL страницы: {self.confluence_config.base_url}pages/{page_id}
-
-Без аутентификации невозможно:
-• Получить содержимое страниц
-• Найти дочерние страницы  
-• Скачать вложенные файлы
-• Выполнить полноценный анализ
-
-Настройте Confluence для получения расширенного анализа.
-                """
-                print("⚠️ Confluence аутентификация не настроена")
-                return error_msg.strip(), f"Confluence страница (ID: {page_id})"
+            auth = self._get_auth(credentials)
             
-            auth = (self.confluence_config.username, self.confluence_config.password)
-            
-            api_url = f"{self.confluence_config.base_url}rest/api/content/{page_id}?expand=body.storage"
+            api_url = f"{self.confluence_base_url}rest/api/content/{page_id}?expand=body.storage"
             print(f"🔗 Запрашиваю содержимое страницы: {api_url}")
             
             response = requests.get(api_url, auth=auth)
+            self._raise_if_auth_error(response, "загрузка содержимого страницы")
             response.raise_for_status()
             
             data = response.json()
@@ -548,16 +576,9 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
             
             # Предоставляем детальную информацию об ошибке
             if "401" in error_details:
-                error_msg = f"""
-❌ ОШИБКА АУТЕНТИФИКАЦИИ (401)
-
-Неверные учетные данные Confluence:
-• Проверьте CONFLUENCE_USERNAME (должен быть email)
-• Проверьте CONFLUENCE_PASSWORD (должен быть API токен, не пароль)
-• Убедитесь, что пользователь имеет доступ к Confluence
-
-URL страницы: {self.confluence_config.base_url}pages/{page_id}
-                """
+                raise ConfluenceAuthenticationError(
+                    f"Ошибка аутентификации Confluence (401) при чтении страницы {page_id}"
+                )
             elif "404" in error_details:
                 error_msg = f"""
 ❌ СТРАНИЦА НЕ НАЙДЕНА (404)
@@ -573,7 +594,7 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
    ✅ https://confluence.1solution.ru/x/ABC123
    ❌ Не используйте внутренние ссылки или фрагменты URL
 
-Оригинальный URL: {self.confluence_config.base_url}pages/{page_id}
+Оригинальный URL: {self.confluence_base_url}pages/{page_id}
                 """
             elif "403" in error_details:
                 error_msg = f"""
@@ -584,7 +605,7 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
 • Убедитесь, что у пользователя есть доступ к пространству
 • Проверьте права доступа к странице
 
-URL страницы: {self.confluence_config.base_url}pages/{page_id}
+URL страницы: {self.confluence_base_url}pages/{page_id}
                 """
             else:
                 error_msg = f"""
@@ -592,7 +613,7 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
 
 Детали ошибки: {error_details}
 
-URL страницы: {self.confluence_config.base_url}pages/{page_id}
+URL страницы: {self.confluence_base_url}pages/{page_id}
 
 Проверьте:
 • Доступность Confluence сервера
@@ -615,10 +636,16 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
         if not page_id:
             raise ValueError(f"Не удалось извлечь ID страницы из URL: {page_url}")
         
-        api_url = f"{self.confluence_config.base_url}rest/api/content/{page_id}?expand=body.storage"
+        api_url = f"{self.confluence_base_url}rest/api/content/{page_id}?expand=body.storage"
         return api_url
     
-    def _get_all_child_pages_recursive(self, parent_page_id: str, level: int = 1, max_level: int = 5) -> List[Dict]:
+    def _get_all_child_pages_recursive(
+        self,
+        parent_page_id: str,
+        credentials: Dict[str, str],
+        level: int = 1,
+        max_level: int = 5,
+    ) -> List[Dict]:
         """Рекурсивно получает все дочерние страницы с ограничением по глубине"""
         all_pages = []
         
@@ -627,12 +654,13 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
             return all_pages
             
         try:
-            auth = (self.confluence_config.username, self.confluence_config.password)
+            auth = self._get_auth(credentials)
             
             # API запрос для получения дочерних страниц
-            api_url = f"{self.confluence_config.base_url}rest/api/content/{parent_page_id}/child/page"
+            api_url = f"{self.confluence_base_url}rest/api/content/{parent_page_id}/child/page"
             
             response = requests.get(api_url, auth=auth)
+            self._raise_if_auth_error(response, "чтение дочерних страниц")
             response.raise_for_status()
             
             data = response.json()
@@ -651,24 +679,29 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
                 print(f"📄 Найдена дочерняя страница (уровень {level}): {child_title}")
                 
                 # Рекурсивно получаем дочерние страницы этой страницы
-                grandchildren = self._get_all_child_pages_recursive(child_id, level + 1, max_level)
+                grandchildren = self._get_all_child_pages_recursive(
+                    child_id, credentials, level + 1, max_level
+                )
                 all_pages.extend(grandchildren)
                 
             return all_pages
             
         except Exception as e:
+            if isinstance(e, ConfluenceAuthenticationError):
+                raise
             print(f"❌ Ошибка при получении дочерних страниц для {parent_page_id}: {str(e)}")
             return []
     
-    def _get_page_attachments(self, page_id: str) -> List[Dict]:
+    def _get_page_attachments(self, page_id: str, credentials: Dict[str, str]) -> List[Dict]:
         """Получает список вложенных файлов страницы"""
         try:
-            auth = (self.confluence_config.username, self.confluence_config.password)
+            auth = self._get_auth(credentials)
             
             # API запрос для получения вложений
-            api_url = f"{self.confluence_config.base_url}rest/api/content/{page_id}/child/attachment"
+            api_url = f"{self.confluence_base_url}rest/api/content/{page_id}/child/attachment"
             
             response = requests.get(api_url, auth=auth)
+            self._raise_if_auth_error(response, "чтение вложений страницы")
             response.raise_for_status()
             
             data = response.json()
@@ -708,17 +741,20 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
             return attachments
             
         except Exception as e:
+            if isinstance(e, ConfluenceAuthenticationError):
+                raise
             print(f"❌ Ошибка при получении вложений для страницы {page_id}: {str(e)}")
             return []
     
-    def _extract_attachment_content(self, attachment: Dict) -> str:
+    def _extract_attachment_content(self, attachment: Dict, credentials: Dict[str, str]) -> str:
         """Извлекает содержимое вложенного файла"""
         try:
-            auth = (self.confluence_config.username, self.confluence_config.password)
+            auth = self._get_auth(credentials)
             
             # Скачиваем файл
-            download_url = f"{self.confluence_config.base_url.rstrip('/')}{attachment['download_url']}"
+            download_url = f"{self.confluence_base_url.rstrip('/')}{attachment['download_url']}"
             response = requests.get(download_url, auth=auth)
+            self._raise_if_auth_error(response, "скачивание вложения страницы")
             response.raise_for_status()
             
             file_data = response.content
@@ -745,6 +781,8 @@ URL страницы: {self.confluence_config.base_url}pages/{page_id}
                 return ""
                 
         except Exception as e:
+            if isinstance(e, ConfluenceAuthenticationError):
+                raise
             print(f"❌ Ошибка при извлечении содержимого файла {attachment['title']}: {str(e)}")
             return ""
     
