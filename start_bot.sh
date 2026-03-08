@@ -33,10 +33,18 @@ check_python() {
         error "Python 3 не установлен!"
         exit 1
     fi
-    
-    PYTHON_VERSION=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1,2)
-    if [[ $(echo "$PYTHON_VERSION < 3.8" | bc -l 2>/dev/null || echo "1") == "1" ]]; then
-        warning "Рекомендуется Python 3.8+, у вас версия $PYTHON_VERSION"
+
+    PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+    PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
+    PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+
+    if [[ "$PYTHON_MAJOR" -ne 3 ]]; then
+        error "Требуется Python 3.x, обнаружен Python $PYTHON_VERSION"
+        exit 1
+    fi
+
+    if [[ "$PYTHON_MINOR" -lt 11 ]]; then
+        warning "Рекомендуется Python 3.11+, у вас версия $PYTHON_VERSION"
     fi
 }
 
@@ -51,14 +59,14 @@ check_venv() {
     source venv/bin/activate
     
     # Обновляем pip
-    pip install --upgrade pip > /dev/null 2>&1
+    pip install --upgrade pip
 }
 
 # Установка зависимостей
 install_dependencies() {
     if [[ -f "requirements.txt" ]]; then
         log "Установка зависимостей..."
-        pip install -r requirements.txt > /dev/null 2>&1
+        pip install -r requirements.txt
         success "Зависимости установлены"
     else
         error "Файл requirements.txt не найден!"

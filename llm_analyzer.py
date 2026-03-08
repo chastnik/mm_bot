@@ -395,6 +395,8 @@ class LLMAnalyzer:
                         source = artifact_info.get('source', 'Из ответа LLM')
                         description = artifact_info.get('description', 'Найдено в анализе')
                         print(f"      ✅ Информация найдена в блоке {i+1}")
+                # Нормализуем статус с учетом конфликтов в полях
+                status = self._normalize_artifact_status(status, description, source)
                 final_artifact_info = {
                     'name': artifact_name,
                     'status': status,
@@ -433,6 +435,31 @@ class LLMAnalyzer:
             print(response_text[:2000] + ("..." if len(response_text) > 2000 else ""))
             print(f"─" * 80)
         return result
+
+    def _normalize_artifact_status(self, status: str, description: str = "", source: str = "") -> str:
+        """
+        Приводит статус к стабильным значениям, учитывая конфликтующие формулировки.
+        Приоритет: НЕ НАЙДЕН > ЧАСТИЧНО НАЙДЕН > НАЙДЕН.
+        """
+        combined = f"{status} {description} {source}".lower()
+
+        not_found_markers = [
+            "не найден", "не найдено", "not found", "отсутствует", "нет данных", "нет информации"
+        ]
+        partial_markers = [
+            "частично", "partial", "неполный", "частичн"
+        ]
+        found_markers = [
+            "найден", "найдено", "found", "есть", "присутствует", "содержит"
+        ]
+
+        if any(marker in combined for marker in not_found_markers):
+            return "НЕ НАЙДЕН"
+        if any(marker in combined for marker in partial_markers):
+            return "ЧАСТИЧНО НАЙДЕН"
+        if any(marker in combined for marker in found_markers):
+            return "НАЙДЕН"
+        return "НЕ НАЙДЕН"
     
     def _parse_artifact_block(self, block: str) -> Dict[str, str]:
         """Парсит блок информации об артефакте"""
@@ -511,12 +538,14 @@ class LLMAnalyzer:
             if not artifact_info['status'] and artifact_info['name']:
                 # Попробуем определить статус из контекста
                 block_lower = block.lower()
-                if any(word in block_lower for word in ['найден', 'есть', 'присутствует', 'содержит']):
-                    artifact_info['status'] = 'НАЙДЕН'
-                elif any(word in block_lower for word in ['не найден', 'отсутствует', 'нет']):
+                # Важно: сначала проверяем "НЕ НАЙДЕН", иначе "не найден" будет
+                # ошибочно отнесен к "найден" из-за совпадения подстроки.
+                if any(word in block_lower for word in ['не найден', 'не найдено', 'отсутствует', 'нет данных', 'нет информации']):
                     artifact_info['status'] = 'НЕ НАЙДЕН'
                 elif any(word in block_lower for word in ['частично', 'неполный', 'частичн']):
                     artifact_info['status'] = 'ЧАСТИЧНО НАЙДЕН'
+                elif any(word in block_lower for word in ['найден', 'найдено', 'есть', 'присутствует', 'содержит']):
+                    artifact_info['status'] = 'НАЙДЕН'
                 else:
                     # Если есть упоминание файлов/документов, считаем что найден
                     if any(word in block_lower for word in ['файл:', 'документ', 'страниц', 'confluence']):

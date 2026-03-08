@@ -78,7 +78,7 @@ erDiagram
 
 ## Требования
 
-- Python `3.8+` (рекомендуется `3.11`).
+- Python `3.11+` (включая `3.14`).
 - Доступ к Mattermost API.
 - Доступ к Confluence (если используете ссылки).
 - Доступ к LLM endpoint (OpenAI-compatible API).
