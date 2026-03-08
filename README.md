@@ -1,120 +1,35 @@
-# Mattermost Document Analyzer Bot 🤖📄
+# Mattermost Document Analyzer Bot
 
 [![GitHub](https://img.shields.io/badge/GitHub-chastnik%2Fmm__bot-blue?style=flat&logo=github)](https://github.com/chastnik/mm_bot)
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat&logo=python)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat)](LICENSE)
+[![CI](https://github.com/chastnik/mm_bot/actions/workflows/ci.yml/badge.svg)](https://github.com/chastnik/mm_bot/actions/workflows/ci.yml)
 
-Интеллектуальный бот для анализа документации ИТ проектов с использованием GPT и автоматической генерацией PDF отчетов в Mattermost.
+Бот для анализа проектной документации в Mattermost: принимает файлы и ссылки на Confluence, извлекает текст, проверяет артефакты по типу проекта и отправляет PDF-отчет.
 
-## 🚀 Возможности
+## Возможности
 
-- **Интерактивный интерфейс**: Выбор типов проектов (BI, DWH, RPA, MDM)
-- **Многоформатная поддержка**: PDF, DOCX, DOC, XLSX, RTF, TXT файлы
-- **Confluence интеграция**: Анализ страниц Confluence по ссылкам (включая дочерние страницы и приложенные файлы)
-- **ИИ анализ**: Использование LLM для поиска артефактов в документах
-- **PDF отчеты**: Автоматическая генерация структурированных отчетов
+- Интерактивный сценарий в DM с ботом.
+- Поддержка файлов: `PDF`, `DOCX`, `DOC`, `XLSX`, `RTF`, `TXT`.
+- Анализ Confluence-страниц (включая дочерние страницы и вложения).
+- Анализ артефактов через LLM endpoint с OpenAI-совместимым API.
+- Генерация структурированного PDF-отчета.
+- Хранение настроек проверки в SQLite с миграциями и seed-синхронизацией.
 
-## 🛠 Установка и настройка
+## Архитектура
 
-### 1. Клонирование репозитория
-```bash
-git clone https://github.com/chastnik/mm_bot.git
-cd mm_bot
+```mermaid
+flowchart LR
+    U[Пользователь в Mattermost] --> B[Mattermost Bot]
+    B --> P[Document Processor]
+    P --> A[LLM Analyzer]
+    A --> R[PDF Generator]
+    R --> B
+    B --> U
+    B --> D[(SQLite settings DB)]
 ```
 
-### 2. Создание виртуального окружения
-```bash
-python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# или
-venv\Scripts\activate     # Windows
-```
-
-### 3. Установка зависимостей
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Настройка переменных окружения
-
-Создайте файл `.env` на основе `env.example`:
-```bash
-cp env.example .env
-```
-
-Опционально можно переопределить путь к БД настроек проверки:
-- `SETTINGS_DB_PATH=data/bot_settings.db`
-
-### 5. Создание бота в Mattermost
-
-1. **Создайте бота в Mattermost:**
-   - Перейдите в **System Console** > **Integrations** > **Bot Accounts**
-   - Нажмите **Add Bot Account**
-   - Заполните данные бота:
-     - **Username**: `document-analyzer-bot`
-     - **Display Name**: `Анализатор документов`
-     - **Description**: `Бот для анализа документации ИТ проектов`
-   - Сохраните **Access Token**
-
-2. **Настройте права бота:**
-   - Добавьте бота в нужную команду
-   - Предоставьте права на чтение/запись сообщений
-   - Разрешите загрузку файлов
-
-### 6. Проверка настроек
-
-Запустите тест компонентов:
-```bash
-python3 test_components.py
-```
-
-## ▶️ Запуск бота
-
-### Производственный запуск
-```bash
-python3 main.py
-```
-
-При запуске бот автоматически:
-- применяет миграции БД настроек;
-- выполняет первичное заполнение (если БД пустая);
-- сверяет `seed_version` и хеш `settings_seed.json` и при изменениях синхронизирует seed-данные в БД.
-
-### Запуск с логированием
-```bash
-./start_bot.sh
-```
-
-### Фоновый запуск (Linux/Mac)
-```bash
-nohup python3 main.py > bot.log 2>&1 &
-```
-
-### Ручной запуск миграций/инициализации настроек
-```bash
-python3 init_settings_db.py
-```
-
-### Запуск в Docker (планируется)
-```bash
-# Coming soon
-docker-compose up -d
-```
-
-## 📖 Использование
-
-### 🎯 Быстрый старт с интерактивными командами
-
-1. **Начало анализа**: `🚀 Начать анализ`
-2. **Выбор типов проектов**: `📋 BI`, `📋 DWH`, `📋 RPA`, `📋 MDM`
-3. **Загрузка документов**: 
-   - Прикрепите файлы (PDF, DOCX, XLSX, RTF, TXT)
-   - Или отправьте ссылки на Confluence страницы
-4. **Управление процессом**: `➕ Добавить документы` или `🔄 Начать анализ`
-5. **Получение отчета**: Бот создаст и отправит PDF отчет
-6. **Новый анализ**: `🚀 Новый анализ`
-
-### 🗄️ Схема БД настроек
+### Схема БД настроек
 
 ```mermaid
 erDiagram
@@ -161,7 +76,109 @@ erDiagram
     artifact_sections ||--o{ artifacts : contains
 ```
 
-### 🔄 Схема процесса работы бота
+## Требования
+
+- Python `3.8+` (рекомендуется `3.11`).
+- Доступ к Mattermost API.
+- Доступ к Confluence (если используете ссылки).
+- Доступ к LLM endpoint (OpenAI-compatible API).
+
+## Быстрый старт (локально)
+
+### 1) Клонирование
+
+```bash
+git clone https://github.com/chastnik/mm_bot.git
+cd mm_bot
+```
+
+### 2) Виртуальное окружение
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### 3) Установка зависимостей
+
+```bash
+pip install -r requirements.txt
+```
+
+### 4) Настройка `.env`
+
+```bash
+cp env.example .env
+```
+
+Заполните значения в `.env`:
+
+- `MATTERMOST_URL`
+- `MATTERMOST_TOKEN`
+- `MATTERMOST_USERNAME`
+- `MATTERMOST_PASSWORD`
+- `MATTERMOST_TEAM`
+- `MATTERMOST_SSL_VERIFY`
+- `CONFLUENCE_USERNAME`
+- `CONFLUENCE_PASSWORD`
+- `CONFLUENCE_BASE_URL`
+- `LLM_PROXY_TOKEN`
+- `LLM_BASE_URL`
+- `LLM_MODEL`
+- `SETTINGS_DB_PATH` (опционально, по умолчанию `data/bot_settings.db`)
+
+### 5) Проверка компонентов
+
+```bash
+python3 test_components.py
+```
+
+### 6) Запуск
+
+```bash
+python3 main.py
+```
+
+При старте бот автоматически:
+
+- применяет миграции БД настроек;
+- выполняет первичный seed, если БД пустая;
+- сверяет `seed_version` и хеш `settings_seed.json` и при изменениях синхронизирует данные в БД.
+
+## Docker
+
+### Первичная установка и запуск
+
+```bash
+./install_prod_docker.sh
+```
+
+### Обновление существующей установки
+
+```bash
+./update_prod_docker.sh
+```
+
+### Полезные команды
+
+```bash
+docker compose ps
+docker compose logs -f
+docker compose restart
+```
+
+## Использование в чате
+
+1. Отправьте `начать анализ` или `🚀 начать анализ`.
+2. Выберите тип(ы) проекта: `BI`, `DWH`, `RPA`, `MDM`.
+3. Отправьте документы:
+   - прикрепленные файлы;
+   - ссылки на Confluence.
+4. По команде `🔄 начать анализ` бот запускает обработку.
+5. Получите сообщение со сводкой и PDF-отчет.
+6. Для нового цикла: `🚀 новый анализ`.
+
+### Схема процесса
 
 ```mermaid
 flowchart TD
@@ -169,122 +186,105 @@ flowchart TD
     B --> C[Инициализация Settings DB]
     C --> D[Миграции и синхронизация seed]
     D --> E[Подключение к Mattermost]
-    E --> F[Ожидание сообщения в DM]
+    E --> F[Ожидание сообщений в DM]
 
     F --> G{Команда начать анализ?}
     G -- Нет --> F
-    G -- Да --> H[Выбор типов проекта]
-    H --> I[Загрузка файлов/ссылок Confluence]
-    I --> J{Есть документы?}
+    G -- Да --> H[Выбор типа проекта]
+    H --> I[Прием файлов и ссылок]
+    I --> J{Документы получены?}
     J -- Нет --> I
     J -- Да --> K[Обработка документов]
     K --> L[LLM-анализ артефактов]
-    L --> M[Генерация PDF-отчета]
-    M --> N[Отправка результата в Mattermost]
+    L --> M[Генерация PDF]
+    M --> N[Отправка результата]
     N --> O[Сброс сессии]
     O --> F
 ```
 
+## Работа с настройками проверки
 
-## 📁 Структура проекта
+- Источник дефолтов: `settings_seed.json`.
+- Хранилище runtime-настроек: SQLite (`SETTINGS_DB_PATH`).
+- Инициализация вручную:
 
-```
-mm_bot/
-├── main.py                 # Точка входа приложения
-├── config.py              # Управление конфигурацией
-├── mattermost_bot.py      # Основной класс бота
-├── document_processor.py  # Обработка документов
-├── llm_analyzer.py        # Анализ с помощью LLM
-├── settings_db.py         # Хранение настроек проверки в SQLite + миграции
-├── init_settings_db.py    # Инициализация БД и первичный seed
-├── settings_seed.json     # Дефолтные настройки для первичного заполнения БД
-├── gpt_analyzer.py        # GPT-специфичный анализатор
-├── pdf_generator.py       # Генерация PDF отчетов
-├── utils.py               # Вспомогательные функции
-├── requirements.txt       # Python зависимости
-├── env.example           # Пример настроек окружения
-├── start_bot.sh          # Скрипт запуска
-├── check_ssl.py          # Проверка SSL соединений
-├── test_components.py    # Тесты компонентов
-├── test_llm.py           # Тесты LLM интеграции
-├── README.md             # Документация проекта
-├── SETUP_PRODUCTION.md   # Руководство по продакшн развертыванию
-├── SSL_TROUBLESHOOTING.md # Руководство по устранению SSL проблем
-├── .github/              # GitHub Actions и настройки
-│   └── dependabot.yml    # Автоматические обновления зависимостей
-└── .devcontainer/        # VS Code Dev Container конфигурация
-    └── devcontainer.json
-```
-
-## 🔧 Устранение неполадок
-
-### Проблемы с подключением к Mattermost
 ```bash
-# Проверьте доступность сервера
-curl -I https://your-mattermost-server.com
-
-# Проверьте токен бота
-curl -H "Authorization: Bearer your_token" \
-     https://your-mattermost-server.com/api/v4/users/me
+python3 init_settings_db.py
 ```
 
-### Проблемы с SSL соединениями
-Запустите диагностический скрипт:
+## Структура проекта
+
+```text
+mm_bot/
+├── main.py
+├── config.py
+├── mattermost_bot.py
+├── document_processor.py
+├── llm_analyzer.py
+├── pdf_generator.py
+├── settings_db.py
+├── settings_seed.json
+├── init_settings_db.py
+├── test_components.py
+├── start_bot.sh
+├── install_prod_docker.sh
+├── update_prod_docker.sh
+├── docker-compose.yml
+├── Dockerfile
+└── .github/workflows/ci.yml
+```
+
+## CI/CD
+
+В CI выполняются:
+
+- синтаксическая проверка Python и shell-скриптов;
+- проверка инициализации БД настроек;
+- smoke-проверка компонентов;
+- сборка Docker-образа.
+
+Dependabot настроен для:
+
+- `pip`;
+- `github-actions`;
+- `devcontainers`.
+
+## Устранение неполадок
+
+### Проверка подключения к Mattermost
+
+```bash
+curl -I https://your-mattermost-server.com
+curl -H "Authorization: Bearer your_token" https://your-mattermost-server.com/api/v4/users/me
+```
+
+### Проверка SSL
+
 ```bash
 python3 check_ssl.py
 ```
 
-### Проблемы с русскими символами в PDF
-Система автоматически использует шрифты DejaVu Sans для корректного отображения кириллицы. Если возникают проблемы:
+### Проблемы с кириллицей в PDF
+
+Установите шрифты DejaVu:
 
 ```bash
-# Ubuntu/Debian
 sudo apt-get install fonts-dejavu
-
-# CentOS/RHEL
-sudo yum install dejavu-sans-fonts
 ```
 
-## 📊 Логирование
+## Логирование
 
-Логи сохраняются в:
-- `bot.log` - основные события
-- `bot_output.log` - вывод приложения
-- Консольный вывод с настраиваемым уровнем детализации
+- `bot.log` — основные события.
+- `bot_output.log` — stdout/stderr при запуске через скрипты.
+- Уровень логирования задается через `LOG_LEVEL`.
 
-Уровень логирования настраивается через переменную `LOG_LEVEL` в `.env`.
+## Безопасность
 
-## 💻 Требования к системе
+- Храните токены и пароли только в `.env`.
+- Не коммитьте `.env` и содержимое `data/`.
+- Используйте `MATTERMOST_SSL_VERIFY=true` в production.
+- Ограничьте права бота необходимыми каналами/операциями.
 
-- **Python**: 3.8+
-- **RAM**: минимум 512MB (рекомендуется 1GB+)
-- **Диск**: 100MB для кода + место для временных файлов
-- **Сеть**: доступ к Mattermost, LiteLLM (`https://litellm.1bitai.ru`), Confluence
-- **ОС**: Linux, macOS, Windows
-- **Рекомендуется**: использовать Pyright для проверки типизации кода
+## Лицензия
 
-## 🔒 Безопасность
-
-- Все API ключи храните в переменных окружения
-- Используйте HTTPS для всех подключений
-- Регулярно обновляйте токены доступа
-- Ограничьте права бота только необходимыми каналами
-- Настройте правильную конфигурацию SSL/TLS
-
-## 🆘 Поддержка
-
-Для получения помощи:
-
-1. 📋 Проверьте логи бота
-2. 🧪 Запустите `test_components.py` для диагностики
-3. ⚙️ Убедитесь в корректности всех настроек в `.env`
-4. 🐛 Создайте Issue в [GitHub репозитории](https://github.com/chastnik/mm_bot/issues)
-5. 💬 Обратитесь к [документации Mattermost API](https://api.mattermost.com/)
-
-## 📄 Лицензия
-
-Этот проект лицензирован под MIT License - смотрите файл [LICENSE](LICENSE) для подробностей.
-
-## 🌟 Авторы
-
-- **@chastnik** - *Первоначальная разработка* - [GitHub](https://github.com/chastnik)
+MIT, подробности в `LICENSE`.
